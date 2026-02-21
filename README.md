@@ -25,11 +25,20 @@ claude-sandbox() {
     echo "Error: not inside a git repository." >&2
     return 1
   fi
+  local env_flag=()
+  local args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --env) env_flag=(-e "SANDBOX_ENV=$2"); shift 2 ;;
+      *)     args+=("$1"); shift ;;
+    esac
+  done
   docker run --rm -it --gpus all \
     -v "$(git rev-parse --show-toplevel)":/workspace \
     -v claude-config:/home/claude/.claude \
     -v uv-cache:/uv-cache \
-    claude-sandbox "$@"
+    "${env_flag[@]}" \
+    claude-sandbox "${args[@]}"
 }
 ```
 
@@ -45,24 +54,34 @@ It will refuse to start outside a git repo. Arguments are forwarded to Claude:
 claude-sandbox --model sonnet -p "refactor the auth module"
 ```
 
+Use `--env` to install project dependencies before Claude starts:
+
+```bash
+claude-sandbox --env uv.lock
+claude-sandbox --env requirements.txt
+claude-sandbox --env lib/requirements-dev.txt
+```
+
 On the first run you'll need to log in with `/login`. Your credentials are stored in the `claude-config` Docker volume and persist across container restarts.
 
 Changes Claude makes inside `/workspace` are written directly to your host filesystem via the bind mount. When the container exits, review with `git diff` and commit or discard.
 
-## Automatic dependency installation
+## Dependency installation
 
-The entrypoint auto-detects and installs project dependencies before starting Claude:
+Pass `--env` with a path (relative to the repo root) to install dependencies before Claude starts:
 
-- `uv.lock` — installed via `uv sync` (creates `.venv` in the project directory)
-- `requirements.txt` — installed into `.venv` via `uv venv` + `uv pip install`
-- `pyproject.toml` — installed via `uv sync` (creates `.venv` in the project directory)
+| File | What happens |
+|------|-------------|
+| `uv.lock` | `uv sync` in the file's directory |
+| `pyproject.toml` | `uv sync` in the file's directory |
+| `requirements.txt` | `uv venv` + `uv pip install -r` in the file's directory |
 
 A shared `uv-cache` Docker volume means packages are downloaded once and reused across all projects. For `uv.lock` projects, the `.venv` persists on the host between runs (make sure `.venv` is in your `.gitignore`).
 
 ## How it works
 
 - **`Dockerfile`** — Ubuntu 24.04 with Python, [uv](https://docs.astral.sh/uv/), and Claude Code. No project-specific packages are baked in. A non-root `claude` user is created because `--dangerously-skip-permissions` refuses to run as root.
-- **`entrypoint.sh`** — Auto-installs deps, creates the config symlink, and launches Claude. The `~/.claude.json` config file is symlinked into `~/.claude/` so a single Docker volume persists all state.
+- **`entrypoint.sh`** — Installs deps (when `--env` is used), creates the config symlink, and launches Claude. The `~/.claude.json` config file is symlinked into `~/.claude/` so a single Docker volume persists all state.
 - **`claude-config` volume** — Stores Claude's authentication and config. Lives in Docker's own storage, separate from your host's `~/.claude/`.
 - **`uv-cache` volume** — Shared package download cache across all projects.
 
