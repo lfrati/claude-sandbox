@@ -1,6 +1,14 @@
 #!/bin/sh
 set -e
 
+# Match container claude user to host user's uid/gid so file ownership is seamless
+if [ -n "$HOST_UID" ] && [ "$HOST_UID" != "$(id -u claude)" ]; then
+  usermod -u "$HOST_UID" claude
+fi
+if [ -n "$HOST_GID" ] && [ "$HOST_GID" != "$(getent group claude | cut -d: -f3)" ]; then
+  groupmod -g "$HOST_GID" claude
+fi
+
 # Fix ownership of config volume (safety net for edge cases)
 chown claude:claude /home/claude/.claude
 

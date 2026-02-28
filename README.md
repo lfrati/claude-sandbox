@@ -41,6 +41,8 @@ claude-sandbox() {
     -v claude-config:/home/claude/.claude \
     -v uv-cache:/uv-cache \
     -e "HOST_HOME=$HOME" \
+    -e "HOST_UID=$(id -u)" \
+    -e "HOST_GID=$(id -g)" \
     "${env_flag[@]}" \
     claude-sandbox "${args[@]}"
 }
