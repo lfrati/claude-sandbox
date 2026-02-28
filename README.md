@@ -2,6 +2,8 @@
 
 A Docker container for running [Claude Code](https://docs.anthropic.com/en/docs/claude-code) unsupervised with GPU access. Claude runs with `--dangerously-skip-permissions` inside the container so it can work autonomously, while your host system stays safe.
 
+Your entire home directory is mounted **read-only** so the agent can access models, data, configs, and anything else you have — but can only write to the project directory. The container also comes with common dev tools, CUDA, and passwordless `sudo` for installing anything else on the fly.
+
 ## Prerequisites
 
 - Docker with [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
@@ -34,9 +36,11 @@ claude-sandbox() {
     esac
   done
   docker run --rm -it --gpus all \
+    -v "$HOME:$HOME:ro" \
     -v "$(git rev-parse --show-toplevel)":/workspace \
     -v claude-config:/home/claude/.claude \
     -v uv-cache:/uv-cache \
+    -e "HOST_HOME=$HOME" \
     "${env_flag[@]}" \
     claude-sandbox "${args[@]}"
 }
@@ -80,10 +84,22 @@ A shared `uv-cache` Docker volume means packages are downloaded once and reused 
 
 ## How it works
 
-- **`Dockerfile`** — Ubuntu 24.04 with Python, [uv](https://docs.astral.sh/uv/), and Claude Code. No project-specific packages are baked in. A non-root `claude` user is created because `--dangerously-skip-permissions` refuses to run as root.
+- **`Dockerfile`** — Based on `nvidia/cuda` (Ubuntu 24.04) with Python, [uv](https://docs.astral.sh/uv/), CUDA toolkit, and Claude Code. Common dev tools are pre-installed (build-essential, Node.js/npm, python3-dev, jq, ripgrep, wget, unzip) and the `claude` user has passwordless `sudo` for installing anything else. A non-root `claude` user is created because `--dangerously-skip-permissions` refuses to run as root.
+- **`$HOME:$HOME:ro` mount** — Your entire home directory is mounted read-only inside the container at the same path. The agent can read your models, data, virtualenvs, configs — anything. The `:ro` flag is kernel-enforced; even root inside the container cannot write through it.
+- **`/workspace` mount** — The git repo, mounted read-write. The only place the agent can make changes.
 - **`entrypoint.sh`** — Installs deps (when `--env` is used), creates the config symlink, and launches Claude. The `~/.claude.json` config file is symlinked into `~/.claude/` so a single Docker volume persists all state.
 - **`claude-config` volume** — Stores Claude's authentication and config. Lives in Docker's own storage, separate from your host's `~/.claude/`.
 - **`uv-cache` volume** — Shared package download cache across all projects.
+
+## Testing
+
+Run the test suite to verify the sandbox isolation, GPU access, and tooling:
+
+```bash
+./test.sh
+```
+
+This builds the image and checks: host home is readable but not writable (even with sudo), workspace is writable, GPU/CUDA work, sudo works, uv and Claude Code are available, and `apt-get install` works inside the container.
 
 ## Managing volumes
 

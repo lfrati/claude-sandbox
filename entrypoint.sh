@@ -42,12 +42,20 @@ if [ -n "$SANDBOX_ENV" ]; then
   esac
 fi
 
-SANDBOX_PROMPT="You are running inside a Docker container with uv pre-installed. \
+SANDBOX_PROMPT="You are running inside a Docker sandbox. \
+You have passwordless sudo — use 'sudo apt-get update && sudo apt-get install -y <pkg>' for system packages. \
+Pre-installed: build-essential, nodejs, npm, python3-dev, CUDA toolkit (nvcc), jq, ripgrep, wget, unzip. \
 ALWAYS use uv instead of pip or raw python: \
-'uv add <pkg>' to add dependencies, \
-'uv pip install <pkg>' to install packages, \
-'uv run <script.py>' to run Python scripts. \
+'uv add <pkg>', 'uv pip install <pkg>', 'uv run <script.py>'. \
 Never use 'pip install' or 'python' directly."
+
+# Tell the agent about the host filesystem if mounted
+if [ -n "$HOST_HOME" ] && [ -d "$HOST_HOME" ]; then
+  SANDBOX_PROMPT="${SANDBOX_PROMPT} \
+The host user's home directory is mounted READ-ONLY at $HOST_HOME. \
+You can read models, data, configs, and other files there, but you CANNOT write to it. \
+Your writable workspace is /workspace — all output and code changes go there."
+fi
 
 if [ -z "$SANDBOX_ENV" ]; then
   SANDBOX_PROMPT="${SANDBOX_PROMPT} \
