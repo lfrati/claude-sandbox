@@ -4,6 +4,7 @@ set -euo pipefail
 # Test the claude-sandbox container isolation:
 #   - Host home dir is readable but not writable
 #   - Workspace is writable
+#   - SSH keys hidden, git push blocked
 #   - GPU, CUDA, sudo, uv all work
 
 PASS=0
@@ -19,6 +20,15 @@ echo ""
 echo "=== Setting up test workspace ==="
 WORKSPACE=$(mktemp -d)
 echo "hello" > "$WORKSPACE/existing-file.txt"
+# Initialize workspace as a git repo with a dummy remote so we can test push failure
+git -C "$WORKSPACE" init -q
+git -C "$WORKSPACE" remote add origin git@github.com:test/nonexistent.git
+git -C "$WORKSPACE" add -A
+git -C "$WORKSPACE" -c user.name=test -c user.email=test@test commit -q -m "init"
+# Copy CLAUDE.md into the test workspace
+cp "$(dirname "$0")/CLAUDE.md" "$WORKSPACE/CLAUDE.md"
+git -C "$WORKSPACE" add CLAUDE.md
+git -C "$WORKSPACE" -c user.name=test -c user.email=test@test commit -q -m "add CLAUDE.md"
 trap 'rm -rf "$WORKSPACE"' EXIT
 
 # Create a marker file in home dir to test reads
@@ -31,6 +41,8 @@ echo "=== Running tests inside container ==="
 
 docker run --rm --gpus all \
   -v "$HOME:$HOME:ro" \
+  --tmpfs "$HOME/.ssh:ro,size=0" \
+  --tmpfs "$HOME/.config/gh:ro,size=0" \
   -v "$WORKSPACE:/workspace" \
   -v claude-config:/home/claude/.claude \
   -v uv-cache:/uv-cache \
@@ -136,7 +148,53 @@ else
   fail 'Claude is not logged in or not responding (run claude-sandbox and use /login first)'
 fi
 
-echo '--- 11. sudo apt-get install ---'
+echo '--- 11. SSH keys hidden ---'
+if [ -d \"$HOME/.ssh\" ] && [ -z \"\$(ls -A \"$HOME/.ssh\" 2>/dev/null)\" ]; then
+  pass 'Host ~/.ssh is empty (tmpfs overlay hiding keys)'
+elif [ ! -d \"$HOME/.ssh\" ]; then
+  pass 'Host ~/.ssh does not exist'
+else
+  fail \"~/.ssh is not empty: \$(ls \"$HOME/.ssh\")\"
+fi
+
+echo '--- 12. GitHub CLI credentials hidden ---'
+if [ -d \"$HOME/.config/gh\" ] && [ -z \"\$(ls -A \"$HOME/.config/gh\" 2>/dev/null)\" ]; then
+  pass 'Host ~/.config/gh is empty (tmpfs overlay hiding credentials)'
+elif [ ! -d \"$HOME/.config/gh\" ]; then
+  pass 'Host ~/.config/gh does not exist'
+else
+  fail \"~/.config/gh is not empty: \$(ls \"$HOME/.config/gh\")\"
+fi
+
+# Verify gh can't authenticate even if installed
+if command -v gh >/dev/null 2>&1 || (sudo apt-get update -qq >/dev/null 2>&1 && sudo apt-get install -y -qq gh >/dev/null 2>&1); then
+  GH_OUTPUT=\$(gh auth status 2>&1) || true
+  if echo \"\$GH_OUTPUT\" | grep -qi 'Logged in to'; then
+    fail \"gh is authenticated: \$GH_OUTPUT\"
+  else
+    pass 'gh is not authenticated (no credentials available)'
+  fi
+else
+  pass 'gh not installed and not installable (credentials inaccessible either way)'
+fi
+
+echo '--- 13. Git push fails without SSH keys ---'
+cd /workspace
+PUSH_OUTPUT=\$(gosu claude env GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5' git push origin main 2>&1) || true
+if echo \"\$PUSH_OUTPUT\" | grep -qiE 'denied|fatal|error|could not|permission|connection refused|resolve|no such|Host key'; then
+  pass 'git push correctly fails without SSH keys'
+else
+  fail \"git push did not fail as expected: \$PUSH_OUTPUT\"
+fi
+
+echo '--- 14. CLAUDE.md found and readable ---'
+if [ -f /workspace/CLAUDE.md ] && grep -q 'NEVER.*push' /workspace/CLAUDE.md; then
+  pass 'CLAUDE.md found in workspace with no-push instructions'
+else
+  fail 'CLAUDE.md not found or missing no-push instructions'
+fi
+
+echo '--- 15. sudo apt-get install ---'
 if sudo apt-get update -qq > /dev/null 2>&1 && sudo apt-get install -y -qq tree > /dev/null 2>&1 && tree --version > /dev/null 2>&1; then
   pass 'Can install packages via sudo apt-get'
 else
