@@ -37,6 +37,8 @@ claude-sandbox() {
   done
   docker run --rm -it --gpus all \
     -v "$HOME:$HOME:ro" \
+    --tmpfs "$HOME/.ssh:ro,size=0" \
+    --tmpfs "$HOME/.config/gh:ro,size=0" \
     -v "$(git rev-parse --show-toplevel)":/workspace \
     -v claude-config:/home/claude/.claude \
     -v uv-cache:/uv-cache \
@@ -87,7 +89,7 @@ A shared `uv-cache` Docker volume means packages are downloaded once and reused 
 ## How it works
 
 - **`Dockerfile`** — Based on `nvidia/cuda` (Ubuntu 24.04) with Python, [uv](https://docs.astral.sh/uv/), CUDA toolkit, and Claude Code. Common dev tools are pre-installed (build-essential, Node.js/npm, python3-dev, jq, ripgrep, wget, unzip) and the `claude` user has passwordless `sudo` for installing anything else. A non-root `claude` user is created because `--dangerously-skip-permissions` refuses to run as root.
-- **`$HOME:$HOME:ro` mount** — Your entire home directory is mounted read-only inside the container at the same path. The agent can read your models, data, virtualenvs, configs — anything. The `:ro` flag is kernel-enforced; even root inside the container cannot write through it.
+- **`$HOME:$HOME:ro` mount** — Your entire home directory is mounted read-only inside the container at the same path. The agent can read your models, data, virtualenvs, configs — anything. The `:ro` flag is kernel-enforced; even root inside the container cannot write through it. `~/.ssh` and `~/.config/gh` are hidden with empty tmpfs overlays so the agent cannot use your SSH keys or GitHub CLI credentials.
 - **`/workspace` mount** — The git repo, mounted read-write. The only place the agent can make changes.
 - **`entrypoint.sh`** — Installs deps (when `--env` is used), creates the config symlink, and launches Claude. The `~/.claude.json` config file is symlinked into `~/.claude/` so a single Docker volume persists all state.
 - **`claude-config` volume** — Stores Claude's authentication and config. Lives in Docker's own storage, separate from your host's `~/.claude/`.
@@ -101,7 +103,7 @@ Run the test suite to verify the sandbox isolation, GPU access, and tooling:
 ./test.sh
 ```
 
-This builds the image and checks: host home is readable but not writable (even with sudo), workspace is writable, GPU/CUDA work, sudo works, uv and Claude Code are available, and `apt-get install` works inside the container.
+This builds the image and checks: host home is readable but not writable (even with sudo), workspace is writable, SSH keys are hidden and git push fails, GitHub CLI credentials are hidden, CLAUDE.md is present, GPU/CUDA work, sudo works, uv and Claude Code are available, and `apt-get install` works inside the container.
 
 ## Managing volumes
 
