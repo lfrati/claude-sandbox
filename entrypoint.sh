@@ -52,7 +52,7 @@ fi
 
 SANDBOX_PROMPT="You are running inside a Docker sandbox. \
 You have passwordless sudo — use 'sudo apt-get update && sudo apt-get install -y <pkg>' for system packages. \
-Pre-installed: build-essential, nodejs, npm, python3-dev, CUDA toolkit (nvcc), jq, ripgrep, wget, unzip. \
+Pre-installed: build-essential, nodejs, npm, python3-dev, CUDA toolkit (nvcc), jq, ripgrep, wget, unzip, ffmpeg. \
 ALWAYS use uv instead of pip or raw python: \
 'uv add <pkg>', 'uv pip install <pkg>', 'uv run <script.py>'. \
 Never use 'pip install' or 'python' directly."
@@ -72,5 +72,16 @@ Do NOT run 'uv sync' or install dependencies unless the user explicitly asks. \
 Use 'uv run --no-sync <script.py>' to avoid triggering automatic dependency installation."
 fi
 
-exec gosu claude claude --dangerously-skip-permissions \
-  --append-system-prompt "$SANDBOX_PROMPT" "$@"
+SANDBOX_PORT="${SANDBOX_PORT:-7681}"
+
+if [ "$SANDBOX_MODE" = "web" ]; then
+  echo "Starting web terminal on port $SANDBOX_PORT..."
+  exec gosu claude ttyd \
+    --writable \
+    --port "$SANDBOX_PORT" \
+    claude --dangerously-skip-permissions \
+    --append-system-prompt "$SANDBOX_PROMPT" "$@"
+else
+  exec gosu claude claude --dangerously-skip-permissions \
+    --append-system-prompt "$SANDBOX_PROMPT" "$@"
+fi

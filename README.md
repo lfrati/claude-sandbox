@@ -27,26 +27,40 @@ claude-sandbox() {
     echo "Error: not inside a git repository." >&2
     return 1
   fi
+  local web="" port="" bind=""
   local env_flag=()
   local args=()
   while [ $# -gt 0 ]; do
     case "$1" in
-      --env) env_flag=(-e "SANDBOX_ENV=$2"); shift 2 ;;
-      *)     args+=("$1"); shift ;;
+      --web)  local addr="${2#:}"; port="${addr##*:}"; bind="${addr%:*}"
+              [ "$bind" = "$port" ] && bind="127.0.0.1"
+              web=1; shift 2 ;;
+      --env)  env_flag=(-e "SANDBOX_ENV=$2"); shift 2 ;;
+      *)      args+=("$1"); shift ;;
     esac
   done
-  docker run --rm -it --gpus all \
-    -v "$HOME:$HOME:ro" \
-    --tmpfs "$HOME/.ssh:ro,size=0" \
-    --tmpfs "$HOME/.config/gh:ro,size=0" \
-    -v "$(git rev-parse --show-toplevel)":/workspace \
-    -v claude-config:/home/claude/.claude \
-    -v uv-cache:/uv-cache \
-    -e "HOST_HOME=$HOME" \
-    -e "HOST_UID=$(id -u)" \
-    -e "HOST_GID=$(id -g)" \
-    "${env_flag[@]}" \
-    claude-sandbox "${args[@]}"
+  local flags=(--gpus all
+    -v "$HOME:$HOME:ro"
+    --tmpfs "$HOME/.ssh:ro,size=0"
+    --tmpfs "$HOME/.config/gh:ro,size=0"
+    -v "$(git rev-parse --show-toplevel)":/workspace
+    -v claude-config:/home/claude/.claude
+    -v uv-cache:/uv-cache
+    -e "HOST_HOME=$HOME"
+    -e "HOST_UID=$(id -u)"
+    -e "HOST_GID=$(id -g)"
+    "${env_flag[@]}")
+  if [ -n "$web" ]; then
+    local cid
+    cid=$(docker run -d \
+      -e "SANDBOX_MODE=web" -e "SANDBOX_PORT=$port" -p "$bind:$port:$port" \
+      "${flags[@]}" claude-sandbox "${args[@]}")
+    echo "Container: ${cid:0:12}"
+    echo "URL:       http://$bind:$port"
+    echo "Stop:      docker rm -f ${cid:0:12}"
+  else
+    docker run --rm -it "${flags[@]}" claude-sandbox "${args[@]}"
+  fi
 }
 ```
 
@@ -74,6 +88,29 @@ On the first run you'll need to log in with `/login`. Your credentials are store
 
 Changes Claude makes inside `/workspace` are written directly to your host filesystem via the bind mount. When the container exits, review with `git diff` and commit or discard.
 
+## Web terminal mode
+
+Pass `--web [addr]:port` to start Claude as a web terminal using [ttyd](https://github.com/tsl0922/ttyd). The container runs detached and serves Claude's interactive TUI over HTTP. Any device on your tailnet can access it in a browser — no tunneling or auth needed.
+
+```bash
+claude-sandbox --web :7681              # localhost only (127.0.0.1:7681)
+claude-sandbox --web 0.0.0.0:7681       # all interfaces (reachable via tailnet)
+```
+
+Then open `http://localhost:7681` (or `http://<tailnet-ip>:7681`) in your browser.
+
+Combine with other flags:
+
+```bash
+claude-sandbox --web 0.0.0.0:9090 --env uv.lock
+```
+
+Stop a running instance using the container ID printed at startup:
+
+```bash
+docker rm -f <container-id>
+```
+
 ## Dependency installation
 
 Pass `--env` with a path (relative to the repo root) to install dependencies before Claude starts:
@@ -88,10 +125,10 @@ A shared `uv-cache` Docker volume means packages are downloaded once and reused 
 
 ## How it works
 
-- **`Dockerfile`** — Based on `nvidia/cuda` (Ubuntu 24.04) with Python, [uv](https://docs.astral.sh/uv/), CUDA toolkit, and Claude Code. Common dev tools are pre-installed (build-essential, Node.js/npm, python3-dev, jq, ripgrep, wget, unzip) and the `claude` user has passwordless `sudo` for installing anything else. A non-root `claude` user is created because `--dangerously-skip-permissions` refuses to run as root.
+- **`Dockerfile`** — Based on `nvidia/cuda` (Ubuntu 24.04) with Python, [uv](https://docs.astral.sh/uv/), CUDA toolkit, and Claude Code. Common dev tools are pre-installed (build-essential, Node.js/npm, python3-dev, jq, ripgrep, wget, unzip, ffmpeg) along with [ttyd](https://github.com/tsl0922/ttyd) for web terminal mode. The `claude` user has passwordless `sudo` for installing anything else. A non-root `claude` user is created because `--dangerously-skip-permissions` refuses to run as root.
 - **`$HOME:$HOME:ro` mount** — Your entire home directory is mounted read-only inside the container at the same path. The agent can read your models, data, virtualenvs, configs — anything. The `:ro` flag is kernel-enforced; even root inside the container cannot write through it. `~/.ssh` and `~/.config/gh` are hidden with empty tmpfs overlays so the agent cannot use your SSH keys or GitHub CLI credentials.
 - **`/workspace` mount** — The git repo, mounted read-write. The only place the agent can make changes.
-- **`entrypoint.sh`** — Installs deps (when `--env` is used), creates the config symlink, and launches Claude. The `~/.claude.json` config file is symlinked into `~/.claude/` so a single Docker volume persists all state.
+- **`entrypoint.sh`** — Installs deps (when `--env` is used), creates the config symlink, and launches Claude. In web mode (`SANDBOX_MODE=web`), it starts a ttyd server that serves Claude's TUI over HTTP. The `~/.claude.json` config file is symlinked into `~/.claude/` so a single Docker volume persists all state.
 - **`claude-config` volume** — Stores Claude's authentication and config. Lives in Docker's own storage, separate from your host's `~/.claude/`.
 - **`uv-cache` volume** — Shared package download cache across all projects.
 
@@ -103,7 +140,7 @@ Run the test suite to verify the sandbox isolation, GPU access, and tooling:
 ./test.sh
 ```
 
-This builds the image and checks: host home is readable but not writable (even with sudo), workspace is writable, SSH keys are hidden and git push fails, GitHub CLI credentials are hidden, CLAUDE.md is present, GPU/CUDA work, sudo works, uv and Claude Code are available, and `apt-get install` works inside the container.
+This builds the image and checks: host home is readable but not writable (even with sudo), workspace is writable, SSH keys are hidden and git push fails, GitHub CLI credentials are hidden, CLAUDE.md is present, GPU/CUDA work, sudo works, uv, Claude Code, and ttyd are available, and `apt-get install` works inside the container.
 
 ## Managing volumes
 

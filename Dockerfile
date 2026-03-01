@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential pkg-config \
     libssl-dev libffi-dev zlib1g-dev \
     nodejs npm \
-    jq ripgrep wget unzip \
+    jq ripgrep wget unzip ttyd ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (from official image, no shell pipe needed)
@@ -32,6 +32,7 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 USER root
 
 WORKDIR /workspace
+EXPOSE 7681
 
 COPY --chmod=755 entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]

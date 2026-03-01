@@ -201,6 +201,13 @@ else
   fail 'Cannot install packages via sudo apt-get'
 fi
 
+echo '--- 16. ttyd available ---'
+if ttyd --version > /dev/null 2>&1; then
+  pass 'ttyd available'
+else
+  fail 'ttyd not available'
+fi
+
 echo ''
 echo \"=== Results: \$PASS passed, \$FAIL failed ===\"
 [ \$FAIL -eq 0 ] && exit 0 || exit 1
