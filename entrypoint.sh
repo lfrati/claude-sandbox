@@ -21,6 +21,10 @@ chown claude:claude /home/claude/.claude/.claude.json
 # Symlink so Claude finds it at ~/.claude.json
 ln -sf /home/claude/.claude/.claude.json /home/claude/.claude.json
 
+# Set git identity for the sandbox agent
+gosu claude git config --global user.name "claude-sandbox"
+gosu claude git config --global user.email "noreply@anthropic.com"
+
 # Install project dependencies if --env was provided
 if [ -n "$SANDBOX_ENV" ]; then
   ENV_FILE="/workspace/$SANDBOX_ENV"
@@ -62,6 +66,7 @@ if [ -n "$HOST_HOME" ] && [ -d "$HOST_HOME" ]; then
   SANDBOX_PROMPT="${SANDBOX_PROMPT} \
 The host user's home directory is mounted READ-ONLY at $HOST_HOME. \
 You can read models, data, configs, and other files there, but you CANNOT write to it. \
+IMPORTANT: ~/ paths the user pastes likely refer to $HOST_HOME/, not /home/claude/. \
 Your writable workspace is /workspace — all output and code changes go there."
 fi
 
