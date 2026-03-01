@@ -10,8 +10,8 @@ set -euo pipefail
 PASS=0
 FAIL=0
 
-pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
-fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
+pass() { echo -e "  \033[32mPASS: $1\033[0m"; PASS=$((PASS + 1)); }
+fail() { echo -e "  \033[31mFAIL: $1\033[0m"; FAIL=$((FAIL + 1)); }
 
 echo "=== Building image ==="
 docker build -t claude-sandbox .
@@ -54,8 +54,8 @@ docker run --rm --gpus all \
 set +e
 PASS=0
 FAIL=0
-pass() { echo \"  PASS: \$1\"; ((PASS++)); }
-fail() { echo \"  FAIL: \$1\"; ((FAIL++)); }
+pass() { echo -e \"  \033[32mPASS: \$1\033[0m\"; ((PASS++)); }
+fail() { echo -e \"  \033[31mFAIL: \$1\033[0m\"; ((FAIL++)); }
 
 # Replay the uid/gid matching from entrypoint (since we override it)
 if [ -n \"\$HOST_UID\" ] && [ \"\$HOST_UID\" != \"\$(id -u claude)\" ]; then
@@ -235,6 +235,12 @@ if [ ! -f "$HOME/.claude-sandbox-test-write" ]; then
 else
   fail "Found unexpected write in host home directory!"
   rm -f "$HOME/.claude-sandbox-test-write"
+fi
+
+if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
+  pass "tailscale installed and connected"
+else
+  fail "tailscale not installed or not connected (required for --web mode)"
 fi
 
 echo ""

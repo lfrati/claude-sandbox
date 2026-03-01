@@ -27,14 +27,16 @@ claude-sandbox() {
     echo "Error: not inside a git repository." >&2
     return 1
   fi
-  local web="" port="" bind=""
+  local web="" port=7681
   local env_flag=()
   local args=()
   while [ $# -gt 0 ]; do
     case "$1" in
-      --web)  local addr="${2#:}"; port="${addr##*:}"; bind="${addr%:*}"
-              [ "$bind" = "$port" ] && bind="127.0.0.1"
-              web=1; shift 2 ;;
+      --web)  web=1
+              if [ -n "$2" ] && case "$2" in -*) false;; *) true;; esac; then
+                port="$2"; shift
+              fi
+              shift ;;
       --env)  env_flag=(-e "SANDBOX_ENV=$2"); shift 2 ;;
       *)      args+=("$1"); shift ;;
     esac
@@ -53,11 +55,19 @@ claude-sandbox() {
   if [ -n "$web" ]; then
     local cid
     cid=$(docker run -d \
-      -e "SANDBOX_MODE=web" -e "SANDBOX_PORT=$port" -p "$bind:$port:$port" \
+      -e "SANDBOX_MODE=web" -e "SANDBOX_PORT=$port" -p "127.0.0.1:$port:$port" \
       "${flags[@]}" claude-sandbox "${args[@]}")
     echo "Container: ${cid:0:12}"
-    echo "URL:       http://$bind:$port"
-    echo "Stop:      docker rm -f ${cid:0:12}"
+    tailscale serve --bg "http://127.0.0.1:$port"
+    echo ""
+    tailscale serve status
+    echo ""
+    echo "Stop: docker rm -f ${cid:0:12}"
+    # When the container exits, tear down tailscale serve
+    { docker wait "$cid" >/dev/null 2>&1
+      tailscale serve --https=443 off
+      echo "Tailscale serve stopped."
+    } &!
   else
     docker run --rm -it "${flags[@]}" claude-sandbox "${args[@]}"
   fi
@@ -90,20 +100,15 @@ Changes Claude makes inside `/workspace` are written directly to your host files
 
 ## Web terminal mode
 
-Pass `--web [addr]:port` to start Claude as a web terminal using [ttyd](https://github.com/tsl0922/ttyd). The container runs detached and serves Claude's interactive TUI over HTTP. Any device on your tailnet can access it in a browser — no tunneling or auth needed.
+Pass `--web [port]` to start Claude as a web terminal using [ttyd](https://github.com/tsl0922/ttyd). The container runs detached and is exposed across your [Tailscale](https://tailscale.com/) tailnet via `tailscale serve` with automatic HTTPS. Any device on your tailnet can reach it at `https://<machine>.<tailnet>.ts.net`.
 
 ```bash
-claude-sandbox --web :7681              # localhost only (127.0.0.1:7681)
-claude-sandbox --web 0.0.0.0:7681       # all interfaces (reachable via tailnet)
+claude-sandbox --web                    # default port 7681
+claude-sandbox --web 9090              # custom port
+claude-sandbox --web --env uv.lock     # combine with other flags
 ```
 
-Then open `http://localhost:7681` (or `http://<tailnet-ip>:7681`) in your browser.
-
-Combine with other flags:
-
-```bash
-claude-sandbox --web 0.0.0.0:9090 --env uv.lock
-```
+When the container exits (via `docker rm -f`), `tailscale serve` is automatically torn down by a background cleanup process.
 
 Stop a running instance using the container ID printed at startup:
 
