@@ -3,23 +3,50 @@ claude-sandbox() {
     echo "Error: not inside a git repository." >&2
     return 1
   fi
-  local web=""
+  local web="" worktree=""
   local env_flag=()
   local args=()
   while [ $# -gt 0 ]; do
     case "$1" in
-      --web)  web=1; shift ;;
-      --env)  env_flag=(-e "SANDBOX_ENV=$2"); shift 2 ;;
-      *)      args+=("$1"); shift ;;
+      --web)      web=1; shift ;;
+      --worktree) worktree="$2"; shift 2 ;;
+      --env)      env_flag=(-e "SANDBOX_ENV=$2"); shift 2 ;;
+      *)          args+=("$1"); shift ;;
     esac
   done
+
+  local repo_root
+  repo_root=$(git rev-parse --show-toplevel)
+  local mount_dir="$repo_root"
+
+  # Set up worktree if requested
+  if [ -n "$worktree" ]; then
+    local wt_dir="$repo_root/.worktrees/$worktree"
+    if [ -d "$wt_dir" ]; then
+      echo "Using existing worktree: $wt_dir"
+    elif git show-ref --verify --quiet "refs/heads/$worktree" 2>/dev/null; then
+      echo "Creating worktree for existing branch: $worktree"
+      git worktree add "$wt_dir" "$worktree"
+    else
+      echo "Creating worktree with new branch: $worktree"
+      git worktree add -b "$worktree" "$wt_dir"
+    fi
+    mount_dir="$wt_dir"
+  fi
+
   mkdir -p "$HOME/models"
   local flags=(--init --gpus all
     -v "$HOME:$HOME:ro"
     -v "$HOME/models:$HOME/models"
     --tmpfs "$HOME/.ssh:ro,size=0"
     --tmpfs "$HOME/.config/gh:ro,size=0"
-    -v "$(git rev-parse --show-toplevel)":/workspace
+    -v "$mount_dir":/workspace)
+  # Worktree .git file points back to main repo's .git/ via absolute path.
+  # Mount it writable so the agent can commit and stage.
+  if [ -n "$worktree" ]; then
+    flags+=(-v "$repo_root/.git:$repo_root/.git")
+  fi
+  flags+=(
     -v claude-config:/home/claude/.claude
     -v uv-cache:/uv-cache
     -e "HOST_HOME=$HOME"
@@ -53,5 +80,15 @@ claude-sandbox() {
     } &!
   else
     docker run --rm -it "${flags[@]}" claude-sandbox "${args[@]}"
+  fi
+
+  # After the container exits, show worktree info
+  if [ -n "$worktree" ]; then
+    echo ""
+    echo "Worktree: $mount_dir"
+    echo "Branch:   $worktree"
+    echo "Review:   cd $mount_dir && git diff"
+    echo "Push:     git push origin $worktree"
+    echo "Cleanup:  git worktree remove .worktrees/$worktree"
   fi
 }

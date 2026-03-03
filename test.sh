@@ -270,5 +270,37 @@ else
   fail "tailscale not installed or not connected (required for --web mode)"
 fi
 
+# Test worktree support: create a worktree, run a container, verify commit works
+WT_BRANCH="test-worktree-$$"
+WT_DIR="$WORKSPACE/.worktrees/$WT_BRANCH"
+git -C "$WORKSPACE" worktree add -b "$WT_BRANCH" "$WT_DIR" >/dev/null 2>&1
+
+WT_OUTPUT=$(docker run --rm --init --gpus all \
+  -v "$HOME:$HOME:ro" \
+  -v "$WT_DIR":/workspace \
+  -v "$WORKSPACE/.git:$WORKSPACE/.git" \
+  -e "HOST_UID=$(id -u)" \
+  -e "HOST_GID=$(id -g)" \
+  --entrypoint /bin/bash \
+  claude-sandbox -c "
+    if [ -n \"\$HOST_UID\" ]; then usermod -u \"\$HOST_UID\" claude 2>/dev/null; fi
+    if [ -n \"\$HOST_GID\" ]; then groupmod -g \"\$HOST_GID\" claude 2>/dev/null; fi
+    gosu claude bash -c '
+      echo worktree-test > /workspace/wt-test.txt &&
+      cd /workspace &&
+      git add wt-test.txt &&
+      git -c user.name=test -c user.email=test@test commit -q -m \"worktree commit\" 2>&1
+    '
+  " 2>&1)
+
+if git -C "$WT_DIR" log --oneline -1 2>/dev/null | grep -q "worktree commit"; then
+  pass "Worktree: agent can commit in worktree"
+else
+  fail "Worktree: agent cannot commit in worktree ($WT_OUTPUT)"
+fi
+
+git -C "$WORKSPACE" worktree remove "$WT_DIR" --force 2>/dev/null
+git -C "$WORKSPACE" branch -D "$WT_BRANCH" 2>/dev/null
+
 echo ""
 echo "=== Final: $PASS host-side checks passed, $FAIL failed ==="
