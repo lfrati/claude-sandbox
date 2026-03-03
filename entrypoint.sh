@@ -59,7 +59,8 @@ You have passwordless sudo — use 'sudo apt-get update && sudo apt-get install 
 Pre-installed: build-essential, nodejs, npm, python3-dev, CUDA toolkit (nvcc), jq, ripgrep, wget, unzip, ffmpeg. \
 ALWAYS use uv instead of pip or raw python: \
 'uv add <pkg>', 'uv pip install <pkg>', 'uv run <script.py>'. \
-Never use 'pip install' or 'python' directly."
+Never use 'pip install' or 'python' directly. \
+If the user asks to stop or shut down, run 'stop-sandbox' to terminate the container."
 
 # Tell the agent about the host filesystem if mounted
 if [ -n "$HOST_HOME" ] && [ -d "$HOST_HOME" ]; then

@@ -49,6 +49,12 @@ docker run --rm --gpus all \
   -e "HOST_HOME=$HOME" \
   -e "HOST_UID=$(id -u)" \
   -e "HOST_GID=$(id -g)" \
+  -e "TERM=$TERM" \
+  -e "COLORTERM=$COLORTERM" \
+  -e "DISPLAY=$DISPLAY" \
+  -e "XAUTHORITY=/tmp/.Xauthority" \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
+  -v "${XAUTHORITY:-$HOME/.Xauthority}:/tmp/.Xauthority:ro" \
   --entrypoint /bin/bash \
   claude-sandbox -c "
 set +e
@@ -206,6 +212,27 @@ if ttyd --version > /dev/null 2>&1; then
   pass 'ttyd available'
 else
   fail 'ttyd not available'
+fi
+
+echo '--- 17. uvx hf available ---'
+if gosu claude uvx --from huggingface-hub hf version > /dev/null 2>&1; then
+  pass 'uvx hf works'
+else
+  fail 'uvx hf not working'
+fi
+
+echo '--- 18. Terminal env forwarded ---'
+if [ -n \"\$TERM\" ] && [ -n \"\$COLORTERM\" ]; then
+  pass \"TERM=\$TERM COLORTERM=\$COLORTERM\"
+else
+  fail \"TERM or COLORTERM not set (TERM=\$TERM COLORTERM=\$COLORTERM)\"
+fi
+
+echo '--- 19. Clipboard access (xclip) ---'
+if gosu claude xclip -selection clipboard -t TARGETS -o > /dev/null 2>&1; then
+  pass 'xclip can connect to X11 display (as claude user)'
+else
+  fail 'xclip cannot connect to X11 display (as claude user)'
 fi
 
 echo ''

@@ -5,11 +5,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential pkg-config \
     libssl-dev libffi-dev zlib1g-dev \
     nodejs npm \
-    jq ripgrep wget unzip ttyd ffmpeg \
+    jq ripgrep wget unzip ttyd ffmpeg xclip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (from official image, no shell pipe needed)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uvx /usr/local/bin/uvx
 
 # Non-root user at uid 1000 (matches typical host user, required for --dangerously-skip-permissions)
 RUN if id ubuntu &>/dev/null; then \
@@ -30,6 +31,8 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 
 # Switch back to root so entrypoint can fix permissions before dropping privileges
 USER root
+
+RUN printf '#!/bin/sh\nkill 1\n' > /usr/local/bin/stop-sandbox && chmod +x /usr/local/bin/stop-sandbox
 
 WORKDIR /workspace
 EXPOSE 7681
