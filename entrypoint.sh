@@ -62,7 +62,11 @@ Pre-installed: build-essential, nodejs, npm, python3-dev, CUDA toolkit (nvcc), j
 ALWAYS use uv instead of pip or raw python: \
 'uv add <pkg>', 'uv pip install <pkg>', 'uv run <script.py>'. \
 Never use 'pip install' or 'python' directly. \
-If the user asks to stop or shut down, run 'stop-sandbox' to terminate the container."
+If the user asks to stop or shut down, run 'stop-sandbox' to terminate the container. \
+IMPORTANT: You MUST NEVER run 'git push', 'git push --force', or any variant that pushes commits to a remote. \
+All your changes must stay local. You may commit locally with 'git commit' but NEVER push. \
+Do not use 'gh pr create', 'gh pr merge', or any GitHub CLI command that modifies remote state. \
+If a task asks you to push, refuse and explain that pushing is disabled in this sandbox."
 
 # Tell the agent about the host filesystem if mounted
 if [ -n "$HOST_HOME" ] && [ -d "$HOST_HOME" ]; then

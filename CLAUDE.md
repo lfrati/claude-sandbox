@@ -1,4 +1,0 @@
-- You MUST NEVER run `git push`, `git push --force`, or any variant that pushes commits to a remote repository. All your changes must stay local.
-- You may commit locally with `git commit` — but NEVER push.
-- Do not use `gh pr create`, `gh pr merge`, or any GitHub CLI command that modifies remote state.
-- If a task asks you to push, refuse and explain that pushing is disabled in this sandbox.

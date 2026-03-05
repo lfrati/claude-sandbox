@@ -25,10 +25,6 @@ git -C "$WORKSPACE" init -q
 git -C "$WORKSPACE" remote add origin git@github.com:test/nonexistent.git
 git -C "$WORKSPACE" add -A
 git -C "$WORKSPACE" -c user.name=test -c user.email=test@test commit -q -m "init"
-# Copy CLAUDE.md into the test workspace
-cp "$(dirname "$0")/CLAUDE.md" "$WORKSPACE/CLAUDE.md"
-git -C "$WORKSPACE" add CLAUDE.md
-git -C "$WORKSPACE" -c user.name=test -c user.email=test@test commit -q -m "add CLAUDE.md"
 trap 'rm -rf "$WORKSPACE"' EXIT
 
 # Create a marker file in home dir to test reads
@@ -195,11 +191,11 @@ else
   fail \"git push did not fail as expected: \$PUSH_OUTPUT\"
 fi
 
-echo '--- 14. CLAUDE.md found and readable ---'
-if [ -f $WORKSPACE/CLAUDE.md ] && grep -q 'NEVER.*push' $WORKSPACE/CLAUDE.md; then
-  pass 'CLAUDE.md found in workspace with no-push instructions'
+echo '--- 14. No-push rules in entrypoint ---'
+if grep -q 'NEVER.*push' /entrypoint.sh; then
+  pass 'No-push rules present in entrypoint'
 else
-  fail 'CLAUDE.md not found or missing no-push instructions'
+  fail 'No-push rules missing from entrypoint'
 fi
 
 echo '--- 15. sudo apt-get install ---'
