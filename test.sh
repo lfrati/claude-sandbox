@@ -43,7 +43,9 @@ docker run --rm --gpus all \
   -v "$HOME:$HOME:ro" \
   --tmpfs "$HOME/.ssh:ro,size=0" \
   --tmpfs "$HOME/.config/gh:ro,size=0" \
-  -v "$WORKSPACE:/workspace" \
+  -v "$WORKSPACE:$WORKSPACE" \
+  -w "$WORKSPACE" \
+  -e "WORKSPACE_DIR=$WORKSPACE" \
   -v claude-config:/home/claude/.claude \
   -v uv-cache:/uv-cache \
   -e "HOST_HOME=$HOME" \
@@ -97,14 +99,14 @@ else
 fi
 
 echo '--- 4. Write access to workspace ---'
-if gosu claude sh -c 'echo test-output > /workspace/test-write.txt' 2>/dev/null; then
+if gosu claude sh -c 'echo test-output > $WORKSPACE/test-write.txt' 2>/dev/null; then
   pass 'Can write to workspace (as claude user)'
 else
   fail 'Cannot write to workspace'
 fi
 
 echo '--- 4b. File ownership matches host user ---'
-FILE_UID=\$(stat -c %u /workspace/test-write.txt)
+FILE_UID=\$(stat -c %u $WORKSPACE/test-write.txt)
 if [ \"\$FILE_UID\" = \"\$HOST_UID\" ]; then
   pass \"Files owned by host uid (\$HOST_UID)\"
 else
@@ -185,7 +187,7 @@ else
 fi
 
 echo '--- 13. Git push fails without SSH keys ---'
-cd /workspace
+cd $WORKSPACE
 PUSH_OUTPUT=\$(gosu claude env GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5' git push origin main 2>&1) || true
 if echo \"\$PUSH_OUTPUT\" | grep -qiE 'denied|fatal|error|could not|permission|connection refused|resolve|no such|Host key'; then
   pass 'git push correctly fails without SSH keys'
@@ -194,7 +196,7 @@ else
 fi
 
 echo '--- 14. CLAUDE.md found and readable ---'
-if [ -f /workspace/CLAUDE.md ] && grep -q 'NEVER.*push' /workspace/CLAUDE.md; then
+if [ -f $WORKSPACE/CLAUDE.md ] && grep -q 'NEVER.*push' $WORKSPACE/CLAUDE.md; then
   pass 'CLAUDE.md found in workspace with no-push instructions'
 else
   fail 'CLAUDE.md not found or missing no-push instructions'
@@ -277,7 +279,9 @@ git -C "$WORKSPACE" worktree add -b "$WT_BRANCH" "$WT_DIR" >/dev/null 2>&1
 
 WT_OUTPUT=$(docker run --rm --init --gpus all \
   -v "$HOME:$HOME:ro" \
-  -v "$WT_DIR":/workspace \
+  -v "$WT_DIR:$WT_DIR" \
+  -w "$WT_DIR" \
+  -e "WORKSPACE_DIR=$WT_DIR" \
   -v "$WORKSPACE/.git:$WORKSPACE/.git" \
   -e "HOST_UID=$(id -u)" \
   -e "HOST_GID=$(id -g)" \
@@ -286,8 +290,8 @@ WT_OUTPUT=$(docker run --rm --init --gpus all \
     if [ -n \"\$HOST_UID\" ]; then usermod -u \"\$HOST_UID\" claude 2>/dev/null; fi
     if [ -n \"\$HOST_GID\" ]; then groupmod -g \"\$HOST_GID\" claude 2>/dev/null; fi
     gosu claude bash -c '
-      echo worktree-test > /workspace/wt-test.txt &&
-      cd /workspace &&
+      echo worktree-test > $WT_DIR/wt-test.txt &&
+      cd $WT_DIR &&
       git add wt-test.txt &&
       git -c user.name=test -c user.email=test@test commit -q -m \"worktree commit\" 2>&1
     '

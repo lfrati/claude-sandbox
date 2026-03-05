@@ -25,9 +25,11 @@ ln -sf /home/claude/.claude/.claude.json /home/claude/.claude.json
 gosu claude git config --global user.name "claude-sandbox"
 gosu claude git config --global user.email "noreply@anthropic.com"
 
+WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
+
 # Install project dependencies if --env was provided
 if [ -n "$SANDBOX_ENV" ]; then
-  ENV_FILE="/workspace/$SANDBOX_ENV"
+  ENV_FILE="$WORKSPACE_DIR/$SANDBOX_ENV"
   if [ ! -f "$ENV_FILE" ]; then
     echo "Error: $SANDBOX_ENV not found in project." >&2
     exit 1
@@ -68,7 +70,7 @@ if [ -n "$HOST_HOME" ] && [ -d "$HOST_HOME" ]; then
 The host user's home directory is mounted READ-ONLY at $HOST_HOME. \
 You can read models, data, configs, and other files there, but you CANNOT write to it. \
 IMPORTANT: ~/ paths the user pastes likely refer to $HOST_HOME/, not /home/claude/. \
-Your writable workspace is /workspace — all output and code changes go there."
+Your writable workspace is $WORKSPACE_DIR — all output and code changes go there."
 fi
 
 if [ -z "$SANDBOX_ENV" ]; then

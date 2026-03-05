@@ -1,4 +1,10 @@
+CLAUDE_SANDBOX_VERSION="0.5.0"
+
 claude-sandbox() {
+  if [ "$1" = "--version" ]; then
+    echo "claude-sandbox v$CLAUDE_SANDBOX_VERSION"
+    return 0
+  fi
   if ! git rev-parse --is-inside-work-tree &>/dev/null; then
     echo "Error: not inside a git repository." >&2
     return 1
@@ -40,7 +46,9 @@ claude-sandbox() {
     -v "$HOME/models:$HOME/models"
     --tmpfs "$HOME/.ssh:ro,size=0"
     --tmpfs "$HOME/.config/gh:ro,size=0"
-    -v "$mount_dir":/workspace)
+    -v "$mount_dir:$mount_dir"
+    -w "$mount_dir"
+    -e "WORKSPACE_DIR=$mount_dir")
   # Worktree .git file points back to main repo's .git/ via absolute path.
   # Mount it writable so the agent can commit and stage.
   if [ -n "$worktree" ]; then
