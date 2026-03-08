@@ -49,6 +49,8 @@ On the first run you'll need to log in with `/login`. Your credentials are store
 
 Changes Claude makes inside `/workspace` are written directly to your host filesystem via the bind mount. When the container exits, review with `git diff` and commit or discard.
 
+Containers are named `<folder>-<random>` (e.g. `my-project-3847`), so you can easily identify them with `docker ps` when running multiple sandboxes. With `--worktree`, the branch name is used instead of the folder name.
+
 ## Web terminal mode
 
 Pass `--web` to start Claude as a web terminal using [ttyd](https://github.com/tsl0922/ttyd). The container runs detached and is exposed across your [Tailscale](https://tailscale.com/) tailnet via `tailscale serve` with automatic HTTPS. Any device on your tailnet can reach it at `https://<machine>.<tailnet>.ts.net`. A free local port is picked automatically.
@@ -60,10 +62,10 @@ claude-sandbox --web --env uv.lock     # combine with other flags
 
 When the container exits (via `docker rm -f`), `tailscale serve` is automatically torn down by a background cleanup process.
 
-Stop a running instance using the container ID printed at startup:
+Stop a running instance by name or container ID:
 
 ```bash
-docker rm -f <container-id>
+docker rm -f my-project-3847
 ```
 
 ## Worktrees
@@ -101,10 +103,11 @@ A shared `uv-cache` Docker volume means packages are downloaded once and reused 
 ## How it works
 
 - **`Dockerfile`** — Based on `nvidia/cuda` (Ubuntu 24.04) with Python, [uv](https://docs.astral.sh/uv/), CUDA toolkit, and Claude Code. Common dev tools are pre-installed (build-essential, Node.js/npm, python3-dev, jq, ripgrep, wget, unzip, ffmpeg, xclip) along with [ttyd](https://github.com/tsl0922/ttyd) for web terminal mode. Includes `stop-sandbox` to terminate the container from inside. The `claude` user has passwordless `sudo` for installing anything else. A non-root `claude` user is created because `--dangerously-skip-permissions` refuses to run as root.
-- **`claude-sandbox.sh`** — Shell function sourced from your `.zshrc`. Handles flag parsing, worktree creation, Docker container launch, Tailscale serve integration, and cleanup.
+- **`claude-sandbox.sh`** — Shell function sourced from your `.zshrc`. Handles flag parsing, worktree creation, container naming (`<folder>-<random>` or `<branch>-<random>`), Docker container launch, Tailscale serve integration, and cleanup.
 - **`$HOME:$HOME:ro` mount** — Your entire home directory is mounted read-only inside the container at the same path. The agent can read your models, data, virtualenvs, configs — anything. The `:ro` flag is kernel-enforced; even root inside the container cannot write through it. `~/.ssh` and `~/.config/gh` are hidden with empty tmpfs overlays so the agent cannot use your SSH keys or GitHub CLI credentials. `~/models` is mounted writable so the agent can download models. X11 display and auth are forwarded for clipboard image paste support.
 - **`/workspace` mount** — The git repo (or worktree), mounted read-write. The only place the agent can make changes. With `--worktree`, the main repo's `.git` directory is also mounted writable so the agent can commit.
-- **`entrypoint.sh`** — Sets git identity, installs deps (when `--env` is used), creates the config symlink, injects no-push safety rules via `--append-system-prompt`, and launches Claude. In web mode (`SANDBOX_MODE=web`), it starts a ttyd server that serves Claude's TUI over HTTP. The `~/.claude.json` config file is symlinked into `~/.claude/` so a single Docker volume persists all state.
+- **`settings.json`** — Default Claude Code settings baked into the image. Currently configures the status line to show `user@host:dir [model · ctx: XX%]`. The entrypoint merges these defaults into the container's settings on every start, preserving any other settings while always applying the status line.
+- **`entrypoint.sh`** — Sets git identity, merges default settings, installs deps (when `--env` is used), creates the config symlink, injects no-push safety rules via `--append-system-prompt`, and launches Claude. In web mode (`SANDBOX_MODE=web`), it starts a ttyd server that serves Claude's TUI over HTTP. The `~/.claude.json` config file is symlinked into `~/.claude/` so a single Docker volume persists all state.
 - **`claude-config` volume** — Stores Claude's authentication and config. Lives in Docker's own storage, separate from your host's `~/.claude/`.
 - **`uv-cache` volume** — Shared package download cache across all projects.
 

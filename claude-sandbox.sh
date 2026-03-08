@@ -51,6 +51,15 @@ EOF
   repo_root=$(git rev-parse --show-toplevel)
   local mount_dir="$repo_root"
 
+  # Container name: foldername-random (or branchname-random for worktrees)
+  local name_base
+  if [ -n "$worktree" ]; then
+    name_base="$worktree"
+  else
+    name_base=$(basename "$repo_root")
+  fi
+  local container_name="${name_base}-$(shuf -i 1000-9999 -n 1)"
+
   # Set up worktree if requested
   if [ -n "$worktree" ]; then
     local wt_dir="$repo_root/.worktrees/$worktree"
@@ -87,8 +96,7 @@ EOF
     -e "HOST_UID=$(id -u)"
     -e "HOST_GID=$(id -g)"
     -e "TERM=$TERM"
-    -e "COLORTERM=$COLORTERM"
-    -e "DISPLAY=$DISPLAY"
+    -e "DISPLAY=${DISPLAY:-}"
     -e "XAUTHORITY=/tmp/.Xauthority"
     -v /tmp/.X11-unix:/tmp/.X11-unix:ro
     -v "${XAUTHORITY:-$HOME/.Xauthority}:/tmp/.Xauthority:ro"
@@ -97,7 +105,7 @@ EOF
     local port
     port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
     local cid
-    cid=$(docker run -d \
+    cid=$(docker run -d --name "$container_name" \
       -e "SANDBOX_MODE=web" -e "SANDBOX_PORT=$port" -p "127.0.0.1:$port:$port" \
       "${flags[@]}" claude-sandbox "${args[@]}") || { echo "Error: container failed to start." >&2; return 1; }
     echo "Container: ${cid:0:12}"
@@ -113,7 +121,7 @@ EOF
       echo "Tailscale serve stopped."
     } &!
   else
-    docker run --rm -it "${flags[@]}" claude-sandbox "${args[@]}"
+    docker run --rm -it --name "$container_name" "${flags[@]}" claude-sandbox "${args[@]}"
   fi
 
   # After the container exits, show worktree info

@@ -21,6 +21,17 @@ chown claude:claude /home/claude/.claude/.claude.json
 # Symlink so Claude finds it at ~/.claude.json
 ln -sf /home/claude/.claude/.claude.json /home/claude/.claude.json
 
+# Merge default settings into existing settings.json (preserves existing keys)
+SETTINGS_FILE="/home/claude/.claude/settings.json"
+if [ -s "$SETTINGS_FILE" ]; then
+  # Keep existing settings, always override statusLine from defaults
+  jq -s '.[0] * {statusLine: .[1].statusLine}' "$SETTINGS_FILE" /etc/claude-defaults/settings.json > "${SETTINGS_FILE}.tmp" \
+    && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+else
+  cp /etc/claude-defaults/settings.json "$SETTINGS_FILE"
+fi
+chown claude:claude "$SETTINGS_FILE"
+
 # Set git identity for the sandbox agent
 gosu claude git config --global user.name "claude-sandbox"
 gosu claude git config --global user.email "noreply@anthropic.com"

@@ -48,7 +48,6 @@ docker run --rm --gpus all \
   -e "HOST_UID=$(id -u)" \
   -e "HOST_GID=$(id -g)" \
   -e "TERM=$TERM" \
-  -e "COLORTERM=$COLORTERM" \
   -e "DISPLAY=$DISPLAY" \
   -e "XAUTHORITY=/tmp/.Xauthority" \
   -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
@@ -220,13 +219,20 @@ else
 fi
 
 echo '--- 18. Terminal env forwarded ---'
-if [ -n \"\$TERM\" ] && [ -n \"\$COLORTERM\" ]; then
-  pass \"TERM=\$TERM COLORTERM=\$COLORTERM\"
+if [ -n \"\$TERM\" ]; then
+  pass \"TERM=\$TERM\"
 else
-  fail \"TERM or COLORTERM not set (TERM=\$TERM COLORTERM=\$COLORTERM)\"
+  fail \"TERM not set\"
 fi
 
-echo '--- 19. Clipboard access (xclip) ---'
+echo '--- 19. Settings defaults baked into image ---'
+if [ -f /etc/claude-defaults/settings.json ] && jq -e '.statusLine.command' /etc/claude-defaults/settings.json > /dev/null 2>&1; then
+  pass 'Default settings.json has statusLine config'
+else
+  fail 'Default settings.json missing or no statusLine in /etc/claude-defaults/'
+fi
+
+echo '--- 20. Clipboard access (xclip) ---'
 if gosu claude xclip -selection clipboard -t TARGETS -o > /dev/null 2>&1; then
   pass 'xclip can connect to X11 display (as claude user)'
 else
@@ -267,6 +273,35 @@ if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; the
 else
   fail "tailscale not installed or not connected (required for --web mode)"
 fi
+
+# Test settings.json merge via entrypoint
+SETTINGS_OUTPUT=$(docker run --rm \
+  -v claude-config:/home/claude/.claude \
+  -e "HOST_UID=$(id -u)" \
+  -e "HOST_GID=$(id -g)" \
+  claude-sandbox --version 2>/dev/null) || true
+# Now check the volume has the merged settings
+SETTINGS_CHECK=$(docker run --rm \
+  -v claude-config:/home/claude/.claude \
+  --entrypoint /bin/bash \
+  claude-sandbox -c "jq -e '.statusLine.command' /home/claude/.claude/settings.json 2>/dev/null" 2>&1) || true
+if echo "$SETTINGS_CHECK" | grep -q 'whoami'; then
+  pass "Entrypoint merges statusLine into settings.json"
+else
+  fail "Entrypoint did not merge statusLine ($SETTINGS_CHECK)"
+fi
+
+# Test container naming: verify name appears in docker ps
+CONTAINER_NAME="test-sandbox-$$"
+CID=$(docker run -d --name "$CONTAINER_NAME" \
+  --entrypoint /bin/bash \
+  claude-sandbox -c "sleep 5" 2>&1)
+if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+  pass "Container named correctly ($CONTAINER_NAME)"
+else
+  fail "Container name not found in docker ps"
+fi
+docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1
 
 # Test worktree support: create a worktree, run a container, verify commit works
 WT_BRANCH="test-worktree-$$"

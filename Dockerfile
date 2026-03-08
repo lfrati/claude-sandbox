@@ -37,5 +37,7 @@ RUN printf '#!/bin/sh\nkill 1\n' > /usr/local/bin/stop-sandbox && chmod +x /usr/
 WORKDIR /workspace
 EXPOSE 7681
 
+COPY --chown=claude:claude settings.json /etc/claude-defaults/settings.json
+
 COPY --chmod=755 entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
