@@ -52,6 +52,10 @@ docker run --rm --gpus all \
   -e "XAUTHORITY=/tmp/.Xauthority" \
   -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
   -v "${XAUTHORITY:-$HOME/.Xauthority}:/tmp/.Xauthority:ro" \
+  -v "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native:/tmp/pulse-native" \
+  -v "$HOME/.config/pulse/cookie:/tmp/pulse-cookie:ro" \
+  -e "PULSE_SERVER=unix:/tmp/pulse-native" \
+  -e "PULSE_COOKIE=/tmp/pulse-cookie" \
   --entrypoint /bin/bash \
   claude-sandbox -c "
 set +e
@@ -232,7 +236,14 @@ else
   fail 'Default settings.json missing or no statusLine in /etc/claude-defaults/'
 fi
 
-echo '--- 20. Clipboard access (xclip) ---'
+echo '--- 20. Audio output (PulseAudio) ---'
+if [ -S /tmp/pulse-native ] && gosu claude ffplay -nodisp -autoexit /test-beep.wav > /dev/null 2>&1; then
+  pass 'Audio playback works (PulseAudio)'
+else
+  fail 'Audio playback failed (PulseAudio socket or ffplay issue)'
+fi
+
+echo '--- 21. Clipboard access (xclip) ---'
 if gosu claude xclip -selection clipboard -t TARGETS -o > /dev/null 2>&1; then
   pass 'xclip can connect to X11 display (as claude user)'
 else

@@ -69,7 +69,8 @@ fi
 
 SANDBOX_PROMPT="You are running inside a Docker sandbox. \
 You have passwordless sudo — use 'sudo apt-get update && sudo apt-get install -y <pkg>' for system packages. \
-Pre-installed: build-essential, nodejs, npm, python3-dev, CUDA toolkit (nvcc), jq, ripgrep, wget, unzip, ffmpeg. \
+Pre-installed: build-essential, nodejs, npm, python3-dev, CUDA toolkit (nvcc), jq, ripgrep, wget, unzip, ffmpeg, ffplay. \
+Audio output is forwarded to the host via PulseAudio — use 'ffplay -nodisp -autoexit file.wav' to play audio. \
 ALWAYS use uv instead of pip or raw python: \
 'uv add <pkg>', 'uv pip install <pkg>', 'uv run <script.py>'. \
 Never use 'pip install' or 'python' directly. \

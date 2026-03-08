@@ -100,6 +100,10 @@ EOF
     -e "XAUTHORITY=/tmp/.Xauthority"
     -v /tmp/.X11-unix:/tmp/.X11-unix:ro
     -v "${XAUTHORITY:-$HOME/.Xauthority}:/tmp/.Xauthority:ro"
+    -v "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native:/tmp/pulse-native"
+    -v "$HOME/.config/pulse/cookie:/tmp/pulse-cookie:ro"
+    -e "PULSE_SERVER=unix:/tmp/pulse-native"
+    -e "PULSE_COOKIE=/tmp/pulse-cookie"
     "${env_flag[@]}")
   if [ -n "$web" ]; then
     local port

@@ -38,6 +38,7 @@ WORKDIR /workspace
 EXPOSE 7681
 
 COPY --chown=claude:claude settings.json /etc/claude-defaults/settings.json
+COPY test-beep.wav /test-beep.wav
 
 COPY --chmod=755 entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
