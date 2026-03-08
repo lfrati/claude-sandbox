@@ -5,6 +5,32 @@ claude-sandbox() {
     echo "claude-sandbox v$CLAUDE_SANDBOX_VERSION"
     return 0
   fi
+  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    cat <<EOF
+claude-sandbox v$CLAUDE_SANDBOX_VERSION — Run Claude Code in a GPU-enabled Docker sandbox
+
+Usage: claude-sandbox [options] [-- claude-args...]
+
+Options:
+  --env <file>        Install dependencies before Claude starts
+                      Supports: uv.lock, requirements.txt, pyproject.toml
+  --web               Start as a web terminal (ttyd + Tailscale serve)
+  --worktree <name>   Run in an isolated git worktree (.worktrees/<name>/)
+  --version           Show version
+  -h, --help          Show this help
+
+Extra arguments are forwarded to Claude Code. Run inside a git repo.
+
+Examples:
+  claude-sandbox                                    # interactive session
+  claude-sandbox -p "fix the login bug"             # one-shot prompt
+  claude-sandbox --model sonnet -p "refactor auth"  # choose model
+  claude-sandbox --env uv.lock                      # install deps first
+  claude-sandbox --web                              # web terminal on tailnet
+  claude-sandbox --worktree feature-auth            # isolated worktree
+EOF
+    return 0
+  fi
   if ! git rev-parse --is-inside-work-tree &>/dev/null; then
     echo "Error: not inside a git repository." >&2
     return 1
@@ -100,3 +126,31 @@ claude-sandbox() {
     echo "Cleanup:  git worktree remove .worktrees/$worktree"
   fi
 }
+
+# Completions
+if [ -n "$ZSH_VERSION" ]; then
+  _claude-sandbox() {
+    local -a opts=('--env[Install dependencies before Claude starts]:file:_files'
+      '--web[Start as a web terminal]'
+      '--worktree[Run in an isolated git worktree]:branch:{compadd $(git branch --format="%(refname:short)" 2>/dev/null)}'
+      '--version[Show version]'
+      '--help[Show help]'
+      '-h[Show help]')
+    _arguments -s "$opts[@]"
+  }
+  compdef _claude-sandbox claude-sandbox
+elif [ -n "$BASH_VERSION" ]; then
+  _claude_sandbox_completions() {
+    local cur prev
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    case "$prev" in
+      --env)      COMPREPLY=($(compgen -f -- "$cur")); return ;;
+      --worktree) COMPREPLY=($(compgen -W "$(git branch --format='%(refname:short)' 2>/dev/null)" -- "$cur")); return ;;
+    esac
+    if [[ "$cur" == -* ]]; then
+      COMPREPLY=($(compgen -W "--env --web --worktree --version --help -h" -- "$cur"))
+    fi
+  }
+  complete -F _claude_sandbox_completions claude-sandbox
+fi
