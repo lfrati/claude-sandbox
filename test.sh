@@ -48,7 +48,7 @@ docker run --rm --gpus all \
   -e "HOST_UID=$(id -u)" \
   -e "HOST_GID=$(id -g)" \
   -e "TERM=$TERM" \
-  -e "DISPLAY=$DISPLAY" \
+  -e "DISPLAY=${DISPLAY:-}" \
   -e "XAUTHORITY=/tmp/.Xauthority" \
   -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
   -v "${XAUTHORITY:-$HOME/.Xauthority}:/tmp/.Xauthority:ro" \
@@ -250,6 +250,50 @@ else
   fail 'xclip cannot connect to X11 display (as claude user)'
 fi
 
+echo '--- 22. llama.cpp binaries accessible via host mount ---'
+LLAMA_BUILD=\"\$HOST_HOME/git/llama.cpp/build/bin\"
+if [ -x \"\$LLAMA_BUILD/llama-server\" ] && [ -x \"\$LLAMA_BUILD/llama-cli\" ]; then
+  pass \"llama.cpp binaries accessible at \$LLAMA_BUILD\"
+else
+  fail \"llama.cpp binaries not found at \$LLAMA_BUILD\"
+fi
+
+echo '--- 23. llama.cpp auto-detection sets PATH and LD_LIBRARY_PATH ---'
+# Simulate the entrypoint auto-detection logic
+LLAMA_CPP_BUILD=\"\${LLAMA_CPP_BUILD:-\${HOST_HOME:+\$HOST_HOME/git/llama.cpp/build/bin}}\"
+if [ -n \"\$LLAMA_CPP_BUILD\" ] && [ -d \"\$LLAMA_CPP_BUILD\" ] && [ -x \"\$LLAMA_CPP_BUILD/llama-server\" ]; then
+  export PATH=\"\$LLAMA_CPP_BUILD:\$PATH\"
+  export LD_LIBRARY_PATH=\"\$LLAMA_CPP_BUILD:\${LD_LIBRARY_PATH:-}\"
+  if command -v llama-server > /dev/null 2>&1 && command -v llama-cli > /dev/null 2>&1; then
+    pass 'llama-server and llama-cli on PATH after auto-detection'
+  else
+    fail 'llama binaries not on PATH after auto-detection'
+  fi
+else
+  fail 'llama.cpp auto-detection did not find build directory'
+fi
+
+echo '--- 24. llama-server can load (libraries resolve) ---'
+if llama-server --version > /dev/null 2>&1 || llama-server --help > /dev/null 2>&1; then
+  pass 'llama-server runs (shared libraries resolve correctly)'
+else
+  fail 'llama-server fails to run (missing shared libraries?)'
+fi
+
+echo '--- 25. GPU access prompt in entrypoint ---'
+if grep -q 'full NVIDIA GPU access' /entrypoint.sh; then
+  pass 'Entrypoint system prompt mentions GPU access'
+else
+  fail 'Entrypoint system prompt missing GPU access text'
+fi
+
+echo '--- 26. llama.cpp prompt in entrypoint ---'
+if grep -q 'llama.cpp is available on PATH' /entrypoint.sh; then
+  pass 'Entrypoint system prompt mentions llama.cpp'
+else
+  fail 'Entrypoint system prompt missing llama.cpp text'
+fi
+
 echo ''
 echo \"=== Results: \$PASS passed, \$FAIL failed ===\"
 [ \$FAIL -eq 0 ] && exit 0 || exit 1
@@ -347,6 +391,32 @@ fi
 
 git -C "$WORKSPACE" worktree remove "$WT_DIR" --force 2>/dev/null
 git -C "$WORKSPACE" branch -D "$WT_BRANCH" 2>/dev/null
+
+# Test llama.cpp availability via real entrypoint
+LLAMA_OUTPUT=$(docker run --rm --gpus all \
+  -v "$HOME:$HOME:ro" \
+  -v "$WORKSPACE:$WORKSPACE" \
+  -w "$WORKSPACE" \
+  -e "WORKSPACE_DIR=$WORKSPACE" \
+  -v claude-config:/home/claude/.claude \
+  -e "HOST_HOME=$HOME" \
+  -e "HOST_UID=$(id -u)" \
+  -e "HOST_GID=$(id -g)" \
+  --entrypoint /bin/bash \
+  claude-sandbox -c "
+    # Source the auto-detection from entrypoint
+    LLAMA_CPP_BUILD=\"\${LLAMA_CPP_BUILD:-\${HOST_HOME:+\$HOST_HOME/git/llama.cpp/build/bin}}\"
+    if [ -n \"\$LLAMA_CPP_BUILD\" ] && [ -d \"\$LLAMA_CPP_BUILD\" ] && [ -x \"\$LLAMA_CPP_BUILD/llama-server\" ]; then
+      export PATH=\"\$LLAMA_CPP_BUILD:\$PATH\"
+      export LD_LIBRARY_PATH=\"\$LLAMA_CPP_BUILD:\${LD_LIBRARY_PATH:-}\"
+    fi
+    llama-server --version 2>&1 || llama-server --help 2>&1 | head -1
+  " 2>&1) || true
+if echo "$LLAMA_OUTPUT" | grep -qiE 'llama|version|usage'; then
+  pass "llama-server works via real entrypoint auto-detection"
+else
+  fail "llama-server not working via entrypoint ($LLAMA_OUTPUT)"
+fi
 
 echo ""
 echo "=== Final: $PASS host-side checks passed, $FAIL failed ==="

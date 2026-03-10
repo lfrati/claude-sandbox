@@ -36,6 +36,14 @@ chown claude:claude "$SETTINGS_FILE"
 gosu claude git config --global user.name "claude-sandbox"
 gosu claude git config --global user.email "noreply@anthropic.com"
 
+# Auto-detect llama.cpp build directory (override with LLAMA_CPP_BUILD env var)
+LLAMA_CPP_BUILD="${LLAMA_CPP_BUILD:-${HOST_HOME:+$HOST_HOME/git/llama.cpp/build/bin}}"
+if [ -n "$LLAMA_CPP_BUILD" ] && [ -d "$LLAMA_CPP_BUILD" ] && [ -x "$LLAMA_CPP_BUILD/llama-server" ]; then
+  export PATH="$LLAMA_CPP_BUILD:$PATH"
+  export LD_LIBRARY_PATH="$LLAMA_CPP_BUILD:${LD_LIBRARY_PATH:-}"
+  LLAMA_AVAILABLE=1
+fi
+
 WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
 
 # Install project dependencies if --env was provided
@@ -69,6 +77,7 @@ fi
 
 SANDBOX_PROMPT="You are running inside a Docker sandbox. \
 You have passwordless sudo — use 'sudo apt-get update && sudo apt-get install -y <pkg>' for system packages. \
+This container has full NVIDIA GPU access (--gpus all). Run 'nvidia-smi' to see available GPUs. \
 Pre-installed: build-essential, nodejs, npm, python3-dev, CUDA toolkit (nvcc), jq, ripgrep, wget, unzip, ffmpeg, ffplay. \
 Audio output is forwarded to the host via PulseAudio — use 'ffplay -nodisp -autoexit file.wav' to play audio. \
 ALWAYS use uv instead of pip or raw python: \
@@ -87,6 +96,13 @@ The host user's home directory is mounted READ-ONLY at $HOST_HOME. \
 You can read models, data, configs, and other files there, but you CANNOT write to it. \
 IMPORTANT: ~/ paths the user pastes likely refer to $HOST_HOME/, not /home/claude/. \
 Your writable workspace is $WORKSPACE_DIR — all output and code changes go there."
+fi
+
+if [ "${LLAMA_AVAILABLE:-}" = "1" ]; then
+  SANDBOX_PROMPT="${SANDBOX_PROMPT} \
+llama.cpp is available on PATH with GPU (CUDA) support. \
+Use 'llama-server -m <model>' to serve models via OpenAI-compatible API, or 'llama-cli -m <model>' for CLI inference. \
+GGUF models are at $HOST_HOME/models/gguf/. List them with 'ls $HOST_HOME/models/gguf/'."
 fi
 
 if [ -z "$SANDBOX_ENV" ]; then
