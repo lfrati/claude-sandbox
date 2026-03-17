@@ -25,8 +25,13 @@ ln -sf /home/claude/.claude/.claude.json /home/claude/.claude.json
 SETTINGS_FILE="/home/claude/.claude/settings.json"
 if [ -s "$SETTINGS_FILE" ]; then
   # Keep existing settings, always override statusLine from defaults
-  jq -s '.[0] * {statusLine: .[1].statusLine}' "$SETTINGS_FILE" /etc/claude-defaults/settings.json > "${SETTINGS_FILE}.tmp" \
-    && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+  if jq -s '.[0] * {statusLine: .[1].statusLine}' "$SETTINGS_FILE" /etc/claude-defaults/settings.json > "${SETTINGS_FILE}.tmp"; then
+    mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+  else
+    echo "Warning: failed to merge settings.json, using defaults." >&2
+    cp /etc/claude-defaults/settings.json "$SETTINGS_FILE"
+    rm -f "${SETTINGS_FILE}.tmp"
+  fi
 else
   cp /etc/claude-defaults/settings.json "$SETTINGS_FILE"
 fi
@@ -75,42 +80,42 @@ if [ -n "$SANDBOX_ENV" ]; then
   esac
 fi
 
-SANDBOX_PROMPT="You are running inside a Docker sandbox. \
-You have passwordless sudo — use 'sudo apt-get update && sudo apt-get install -y <pkg>' for system packages. \
-This container has full NVIDIA GPU access (--gpus all). Run 'nvidia-smi' to see available GPUs. \
-Pre-installed: build-essential, nodejs, npm, python3-dev, CUDA toolkit (nvcc), jq, ripgrep, wget, unzip, ffmpeg, ffplay. \
-Audio output is forwarded to the host via PulseAudio — use 'ffplay -nodisp -autoexit file.wav' to play audio. \
-ALWAYS use uv instead of pip or raw python: \
-'uv add <pkg>', 'uv pip install <pkg>', 'uv run <script.py>'. \
-Never use 'pip install' or 'python' directly. \
-If the user asks to stop or shut down, run 'stop-sandbox' to terminate the container. \
-IMPORTANT: You MUST NEVER run 'git push', 'git push --force', or any variant that pushes commits to a remote. \
-All your changes must stay local. You may commit locally with 'git commit' but NEVER push. \
-Do not use 'gh pr create', 'gh pr merge', or any GitHub CLI command that modifies remote state. \
-If a task asks you to push, refuse and explain that pushing is disabled in this sandbox."
+append_prompt() { PROMPT_PARTS="${PROMPT_PARTS:+$PROMPT_PARTS }$1"; }
+
+append_prompt "You are running inside a Docker sandbox."
+append_prompt "You have passwordless sudo — use 'sudo apt-get update && sudo apt-get install -y <pkg>' for system packages."
+append_prompt "This container has full NVIDIA GPU access (--gpus all). Run 'nvidia-smi' to see available GPUs."
+append_prompt "Pre-installed: build-essential, nodejs, npm, python3-dev, CUDA toolkit (nvcc), jq, ripgrep, wget, unzip, ffmpeg, ffplay."
+append_prompt "Audio output is forwarded to the host via PulseAudio — use 'ffplay -nodisp -autoexit file.wav' to play audio."
+append_prompt "ALWAYS use uv instead of pip or raw python: 'uv add <pkg>', 'uv pip install <pkg>', 'uv run <script.py>'."
+append_prompt "Never use 'pip install' or 'python' directly."
+append_prompt "If the user asks to stop or shut down, run 'stop-sandbox' to terminate the container."
+append_prompt "IMPORTANT: You MUST NEVER run 'git push', 'git push --force', or any variant that pushes commits to a remote."
+append_prompt "All your changes must stay local. You may commit locally with 'git commit' but NEVER push."
+append_prompt "Do not use 'gh pr create', 'gh pr merge', or any GitHub CLI command that modifies remote state."
+append_prompt "If a task asks you to push, refuse and explain that pushing is disabled in this sandbox."
 
 # Tell the agent about the host filesystem if mounted
 if [ -n "$HOST_HOME" ] && [ -d "$HOST_HOME" ]; then
-  SANDBOX_PROMPT="${SANDBOX_PROMPT} \
-The host user's home directory is mounted READ-ONLY at $HOST_HOME. \
-You can read models, data, configs, and other files there, but you CANNOT write to it. \
-IMPORTANT: ~/ paths the user pastes likely refer to $HOST_HOME/, not /home/claude/. \
-Your writable workspace is $WORKSPACE_DIR — all output and code changes go there."
+  append_prompt "The host user's home directory is mounted READ-ONLY at $HOST_HOME."
+  append_prompt "You can read models, data, configs, and other files there, but you CANNOT write to it."
+  append_prompt "IMPORTANT: ~/ paths the user pastes likely refer to $HOST_HOME/, not /home/claude/."
+  append_prompt "Your writable workspace is $WORKSPACE_DIR — all output and code changes go there."
 fi
 
 if [ "${LLAMA_AVAILABLE:-}" = "1" ]; then
-  SANDBOX_PROMPT="${SANDBOX_PROMPT} \
-llama.cpp is available on PATH with GPU (CUDA) support. \
-Use 'llama-server -m <model>' to serve models via OpenAI-compatible API, or 'llama-cli -m <model>' for CLI inference. \
-GGUF models are at $HOST_HOME/models/gguf/. List them with 'ls $HOST_HOME/models/gguf/'."
+  append_prompt "llama.cpp is available on PATH with GPU (CUDA) support."
+  append_prompt "Use 'llama-server -m <model>' to serve models via OpenAI-compatible API, or 'llama-cli -m <model>' for CLI inference."
+  append_prompt "GGUF models are at $HOST_HOME/models/gguf/. List them with 'ls $HOST_HOME/models/gguf/'."
 fi
 
 if [ -z "$SANDBOX_ENV" ]; then
-  SANDBOX_PROMPT="${SANDBOX_PROMPT} \
-Dependencies have NOT been pre-installed. \
-Do NOT run 'uv sync' or install dependencies unless the user explicitly asks. \
-Use 'uv run --no-sync <script.py>' to avoid triggering automatic dependency installation."
+  append_prompt "Dependencies have NOT been pre-installed."
+  append_prompt "Do NOT run 'uv sync' or install dependencies unless the user explicitly asks."
+  append_prompt "Use 'uv run --no-sync <script.py>' to avoid triggering automatic dependency installation."
 fi
+
+SANDBOX_PROMPT="$PROMPT_PARTS"
 
 SANDBOX_PORT="${SANDBOX_PORT:-7681}"
 
@@ -121,6 +126,8 @@ if [ "$SANDBOX_MODE" = "web" ]; then
     --port "$SANDBOX_PORT" \
     claude --dangerously-skip-permissions \
     --append-system-prompt "$SANDBOX_PROMPT" "$@"
+elif [ "$SANDBOX_MODE" = "shell" ]; then
+  exec gosu claude bash
 else
   exec gosu claude claude --dangerously-skip-permissions \
     --append-system-prompt "$SANDBOX_PROMPT" "$@"

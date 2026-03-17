@@ -14,6 +14,7 @@ Usage: claude-sandbox [options] [-- claude-args...]
 Options:
   --env <file>        Install dependencies before Claude starts
                       Supports: uv.lock, requirements.txt, pyproject.toml
+  --shell             Drop into a bash shell instead of Claude
   --web               Start as a web terminal (ttyd + Tailscale serve)
   --worktree <name>   Run in an isolated git worktree (.worktrees/<name>/)
   --version           Show version
@@ -27,6 +28,7 @@ Examples:
   claude-sandbox --model sonnet -p "refactor auth"  # choose model
   claude-sandbox --env uv.lock                      # install deps first
   claude-sandbox --web                              # web terminal on tailnet
+  claude-sandbox --shell                            # bash shell in sandbox
   claude-sandbox --worktree feature-auth            # isolated worktree
 EOF
     return 0
@@ -35,20 +37,20 @@ EOF
     echo "Error: not inside a git repository." >&2
     return 1
   fi
-  local web="" worktree=""
-  local env_flag=()
+  local web="" worktree="" shell="" sandbox_env=""
   local args=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --web)      web=1; shift ;;
+      --shell)    shell=1; shift ;;
       --worktree) worktree="$2"; shift 2 ;;
-      --env)      env_flag=(-e "SANDBOX_ENV=$2"); shift 2 ;;
+      --env)      sandbox_env="$2"; shift 2 ;;
       *)          args+=("$1"); shift ;;
     esac
   done
 
   local repo_root
-  repo_root=$(git rev-parse --show-toplevel)
+  repo_root=$(git rev-parse --show-toplevel) || { echo "Error: failed to determine repository root." >&2; return 1; }
   local mount_dir="$repo_root"
 
   # Container name: foldername-random (or branchname-random for worktrees)
@@ -67,15 +69,31 @@ EOF
       echo "Using existing worktree: $wt_dir"
     elif git show-ref --verify --quiet "refs/heads/$worktree" 2>/dev/null; then
       echo "Creating worktree for existing branch: $worktree"
-      git worktree add "$wt_dir" "$worktree"
+      git worktree add "$wt_dir" "$worktree" || { echo "Error: failed to create worktree for branch '$worktree'." >&2; return 1; }
     else
       echo "Creating worktree with new branch: $worktree"
-      git worktree add -b "$worktree" "$wt_dir"
+      git worktree add -b "$worktree" "$wt_dir" || { echo "Error: failed to create worktree with new branch '$worktree'." >&2; return 1; }
     fi
     mount_dir="$wt_dir"
   fi
 
-  mkdir -p "$HOME/models"
+  # Validate env file exists on host before starting container
+  local env_flag=()
+  if [ -n "$sandbox_env" ]; then
+    if [ ! -f "$mount_dir/$sandbox_env" ]; then
+      echo "Error: env file '$sandbox_env' not found in $mount_dir." >&2
+      return 1
+    fi
+    env_flag=(-e "SANDBOX_ENV=$sandbox_env")
+  fi
+
+  # Check image exists
+  if ! docker image inspect claude-sandbox >/dev/null 2>&1; then
+    echo "Error: claude-sandbox image not found. Build it with: docker build -t claude-sandbox ." >&2
+    return 1
+  fi
+
+  mkdir -p "$HOME/models" || { echo "Error: failed to create ~/models directory." >&2; return 1; }
   local flags=(--init --gpus all
     -v "$HOME:$HOME:ro"
     -v "$HOME/models:$HOME/models"
@@ -107,7 +125,7 @@ EOF
     "${env_flag[@]}")
   if [ -n "$web" ]; then
     local port
-    port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+    port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()') || { echo "Error: failed to find available port." >&2; return 1; }
     local cid
     cid=$(docker run -d --name "$container_name" \
       -e "SANDBOX_MODE=web" -e "SANDBOX_PORT=$port" -p "127.0.0.1:$port:$port" \
@@ -120,10 +138,14 @@ EOF
     fi
     echo "Stop: docker rm -f ${cid:0:12}"
     # When the container exits, tear down tailscale serve
-    { docker wait "$cid" >/dev/null 2>&1
+    (
+      trap 'tailscale serve --https=443 off 2>/dev/null; exit' INT TERM
+      docker wait "$cid" >/dev/null 2>&1
       tailscale serve --https=443 off
       echo "Tailscale serve stopped."
-    } &!
+    ) & disown
+  elif [ -n "$shell" ]; then
+    docker run --rm -it --name "$container_name" -e "SANDBOX_MODE=shell" "${flags[@]}" claude-sandbox
   else
     docker run --rm -it --name "$container_name" "${flags[@]}" claude-sandbox "${args[@]}"
   fi
@@ -143,6 +165,7 @@ EOF
 if [ -n "$ZSH_VERSION" ]; then
   _claude-sandbox() {
     local -a opts=('--env[Install dependencies before Claude starts]:file:_files'
+      '--shell[Drop into a bash shell]'
       '--web[Start as a web terminal]'
       '--worktree[Run in an isolated git worktree]:branch:{compadd $(git branch --format="%(refname:short)" 2>/dev/null)}'
       '--version[Show version]'
@@ -161,7 +184,7 @@ elif [ -n "$BASH_VERSION" ]; then
       --worktree) COMPREPLY=($(compgen -W "$(git branch --format='%(refname:short)' 2>/dev/null)" -- "$cur")); return ;;
     esac
     if [[ "$cur" == -* ]]; then
-      COMPREPLY=($(compgen -W "--env --web --worktree --version --help -h" -- "$cur"))
+      COMPREPLY=($(compgen -W "--env --shell --web --worktree --version --help -h" -- "$cur"))
     fi
   }
   complete -F _claude_sandbox_completions claude-sandbox
