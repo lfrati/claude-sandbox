@@ -5,7 +5,8 @@ set -euo pipefail
 #   - Host home dir is readable but not writable
 #   - Workspace is writable
 #   - SSH keys hidden, git push blocked
-#   - GPU, CUDA, sudo, uv all work
+#   - Network firewall blocks unauthorized domains
+#   - GPU, CUDA, sudo, uv, gh all work
 
 PASS=0
 FAIL=0
@@ -36,6 +37,7 @@ echo ""
 echo "=== Running tests inside container ==="
 
 docker run --rm --gpus all \
+  --cap-add=NET_ADMIN --cap-add=NET_RAW \
   -v "$HOME:$HOME:ro" \
   --tmpfs "$HOME/.ssh:ro,size=0" \
   --tmpfs "$HOME/.config/gh:ro,size=0" \
@@ -73,6 +75,9 @@ if [ -n \"\$HOST_GID\" ] && [ \"\$HOST_GID\" != \"\$(getent group claude | cut -
 fi
 chown claude:claude /home/claude/.claude 2>/dev/null || true
 ln -sf /home/claude/.claude/.claude.json /home/claude/.claude.json 2>/dev/null || true
+
+echo '--- Initializing firewall ---'
+/usr/local/bin/init-firewall.sh
 
 echo '--- 1. Read access to host home directory ---'
 if cat \"$HOME/.claude-sandbox-test-marker\" 2>/dev/null | grep -q sandbox-test; then
@@ -173,16 +178,12 @@ else
   fail \"~/.config/gh is not empty: \$(ls \"$HOME/.config/gh\")\"
 fi
 
-# Verify gh can't authenticate even if installed
-if command -v gh >/dev/null 2>&1 || (sudo apt-get update -qq >/dev/null 2>&1 && sudo apt-get install -y -qq gh >/dev/null 2>&1); then
-  GH_OUTPUT=\$(gh auth status 2>&1) || true
-  if echo \"\$GH_OUTPUT\" | grep -qi 'Logged in to'; then
-    fail \"gh is authenticated: \$GH_OUTPUT\"
-  else
-    pass 'gh is not authenticated (no credentials available)'
-  fi
+# Verify gh can't authenticate via host credentials (tmpfs overlay hides them)
+GH_OUTPUT=\$(gh auth status 2>&1) || true
+if echo \"\$GH_OUTPUT\" | grep -qi 'Logged in to'; then
+  fail \"gh is authenticated via host credentials: \$GH_OUTPUT\"
 else
-  pass 'gh not installed and not installable (credentials inaccessible either way)'
+  pass 'gh is not authenticated via host credentials (tmpfs overlay working)'
 fi
 
 echo '--- 13. Git push fails without SSH keys ---'
@@ -208,49 +209,70 @@ else
   fail 'Cannot install packages via sudo apt-get'
 fi
 
-echo '--- 16. ttyd available ---'
-if ttyd --version > /dev/null 2>&1; then
-  pass 'ttyd available'
+echo '--- 16. Firewall: blocked domain unreachable ---'
+if curl --connect-timeout 3 -sf https://example.com >/dev/null 2>&1; then
+  fail 'example.com is reachable (firewall not working!)'
 else
-  fail 'ttyd not available'
+  pass 'Blocked domain (example.com) is unreachable'
 fi
 
-echo '--- 17. uvx hf available ---'
+echo '--- 17. Firewall: allowed domain reachable ---'
+if curl --connect-timeout 5 -sf https://pypi.org/simple/ >/dev/null 2>&1; then
+  pass 'Allowed domain (pypi.org) is reachable through firewall'
+else
+  fail 'Allowed domain (pypi.org) is unreachable (firewall too restrictive?)'
+fi
+
+echo '--- 18. Firewall: GitHub API reachable ---'
+if curl --connect-timeout 5 -sf https://api.github.com/zen >/dev/null 2>&1; then
+  pass 'GitHub API reachable through firewall'
+else
+  fail 'GitHub API unreachable (firewall blocking GitHub?)'
+fi
+
+echo '--- 19. gh CLI available ---'
+if gh --version > /dev/null 2>&1; then
+  pass 'gh CLI available'
+else
+  fail 'gh CLI not available'
+fi
+
+echo '--- 20. uvx hf available ---'
 if gosu claude uvx --from huggingface-hub hf version > /dev/null 2>&1; then
   pass 'uvx hf works'
 else
   fail 'uvx hf not working'
 fi
 
-echo '--- 18. Terminal env forwarded ---'
+echo '--- 21. Terminal env forwarded ---'
 if [ -n \"\$TERM\" ]; then
   pass \"TERM=\$TERM\"
 else
   fail \"TERM not set\"
 fi
 
-echo '--- 19. Settings defaults baked into image ---'
+echo '--- 22. Settings defaults baked into image ---'
 if [ -f /etc/claude-defaults/settings.json ] && jq -e '.statusLine.command' /etc/claude-defaults/settings.json > /dev/null 2>&1; then
   pass 'Default settings.json has statusLine config'
 else
   fail 'Default settings.json missing or no statusLine in /etc/claude-defaults/'
 fi
 
-echo '--- 20. Audio output (PulseAudio) ---'
+echo '--- 23. Audio output (PulseAudio) ---'
 if [ -S /tmp/pulse-native ] && gosu claude ffplay -nodisp -autoexit /test-beep.wav > /dev/null 2>&1; then
   pass 'Audio playback works (PulseAudio)'
 else
   fail 'Audio playback failed (PulseAudio socket or ffplay issue)'
 fi
 
-echo '--- 21. Clipboard access (xclip) ---'
+echo '--- 24. Clipboard access (xclip) ---'
 if gosu claude xclip -selection clipboard -t TARGETS -o > /dev/null 2>&1; then
   pass 'xclip can connect to X11 display (as claude user)'
 else
   fail 'xclip cannot connect to X11 display (as claude user)'
 fi
 
-echo '--- 22. llama.cpp binaries accessible via host mount ---'
+echo '--- 25. llama.cpp binaries accessible via host mount ---'
 LLAMA_BUILD=\"\$HOST_HOME/git/llama.cpp/build/bin\"
 if [ -x \"\$LLAMA_BUILD/llama-server\" ] && [ -x \"\$LLAMA_BUILD/llama-cli\" ]; then
   pass \"llama.cpp binaries accessible at \$LLAMA_BUILD\"
@@ -258,7 +280,7 @@ else
   fail \"llama.cpp binaries not found at \$LLAMA_BUILD\"
 fi
 
-echo '--- 23. llama.cpp auto-detection sets PATH and LD_LIBRARY_PATH ---'
+echo '--- 26. llama.cpp auto-detection sets PATH and LD_LIBRARY_PATH ---'
 # Simulate the entrypoint auto-detection logic
 LLAMA_CPP_BUILD=\"\${LLAMA_CPP_BUILD:-\${HOST_HOME:+\$HOST_HOME/git/llama.cpp/build/bin}}\"
 if [ -n \"\$LLAMA_CPP_BUILD\" ] && [ -d \"\$LLAMA_CPP_BUILD\" ] && [ -x \"\$LLAMA_CPP_BUILD/llama-server\" ]; then
@@ -273,21 +295,21 @@ else
   fail 'llama.cpp auto-detection did not find build directory'
 fi
 
-echo '--- 24. llama-server can load (libraries resolve) ---'
+echo '--- 27. llama-server can load (libraries resolve) ---'
 if llama-server --version > /dev/null 2>&1 || llama-server --help > /dev/null 2>&1; then
   pass 'llama-server runs (shared libraries resolve correctly)'
 else
   fail 'llama-server fails to run (missing shared libraries?)'
 fi
 
-echo '--- 25. GPU access prompt in entrypoint ---'
+echo '--- 28. GPU access prompt in entrypoint ---'
 if grep -q 'full NVIDIA GPU access' /entrypoint.sh; then
   pass 'Entrypoint system prompt mentions GPU access'
 else
   fail 'Entrypoint system prompt missing GPU access text'
 fi
 
-echo '--- 26. llama.cpp prompt in entrypoint ---'
+echo '--- 29. llama.cpp prompt in entrypoint ---'
 if grep -q 'llama.cpp is available on PATH' /entrypoint.sh; then
   pass 'Entrypoint system prompt mentions llama.cpp'
 else
@@ -323,14 +345,9 @@ else
   rm -f "$HOME/.claude-sandbox-test-write"
 fi
 
-if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
-  pass "tailscale installed and connected"
-else
-  fail "tailscale not installed or not connected (required for --web mode)"
-fi
-
 # Test settings.json merge via entrypoint
 SETTINGS_OUTPUT=$(docker run --rm \
+  --cap-add=NET_ADMIN --cap-add=NET_RAW \
   -v claude-config:/home/claude/.claude \
   -e "HOST_UID=$(id -u)" \
   -e "HOST_GID=$(id -g)" \
@@ -416,6 +433,19 @@ if echo "$LLAMA_OUTPUT" | grep -qiE 'llama|version|usage'; then
   pass "llama-server works via real entrypoint auto-detection"
 else
   fail "llama-server not working via entrypoint ($LLAMA_OUTPUT)"
+fi
+
+# Test capability drop via real entrypoint (shell mode)
+CAP_OUTPUT=$(docker run --rm \
+  --cap-add=NET_ADMIN --cap-add=NET_RAW \
+  -e "SANDBOX_MODE=shell" \
+  -e "HOST_UID=$(id -u)" \
+  -e "HOST_GID=$(id -g)" \
+  claude-sandbox -c "sudo iptables -F 2>&1; sudo bash -c 'iptables -F' 2>&1" 2>&1) || true
+if echo "$CAP_OUTPUT" | grep -qi 'permission denied\|not permitted'; then
+  pass "Capability drop: sudo iptables blocked via real entrypoint"
+else
+  fail "Capability drop: sudo iptables was not blocked ($CAP_OUTPUT)"
 fi
 
 echo ""

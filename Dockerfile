@@ -5,7 +5,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential pkg-config \
     libssl-dev libffi-dev zlib1g-dev \
     nodejs npm \
-    jq ripgrep wget unzip ttyd ffmpeg xclip \
+    jq ripgrep wget unzip ffmpeg xclip \
+    iptables ipset iproute2 dnsutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# GitHub CLI (from official apt repo)
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (from official image, no shell pipe needed)
@@ -35,10 +44,10 @@ USER root
 RUN printf '#!/bin/sh\nkill 1\n' > /usr/local/bin/stop-sandbox && chmod +x /usr/local/bin/stop-sandbox
 
 WORKDIR /workspace
-EXPOSE 7681
 
 COPY --chown=claude:claude settings.json /etc/claude-defaults/settings.json
 COPY test-beep.wav /test-beep.wav
 
+COPY --chmod=755 init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY --chmod=755 entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]

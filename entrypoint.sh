@@ -49,6 +49,9 @@ if [ -n "$LLAMA_CPP_BUILD" ] && [ -d "$LLAMA_CPP_BUILD" ] && [ -x "$LLAMA_CPP_BU
   LLAMA_AVAILABLE=1
 fi
 
+# Initialize network firewall (allowlists essential domains, blocks everything else)
+/usr/local/bin/init-firewall.sh
+
 WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
 
 # Install project dependencies if --env was provided
@@ -90,9 +93,15 @@ append_prompt "Audio output is forwarded to the host via PulseAudio — use 'ffp
 append_prompt "ALWAYS use uv instead of pip or raw python: 'uv add <pkg>', 'uv pip install <pkg>', 'uv run <script.py>'."
 append_prompt "Never use 'pip install' or 'python' directly."
 append_prompt "If the user asks to stop or shut down, run 'stop-sandbox' to terminate the container."
+append_prompt "A network firewall is active — only GitHub, Anthropic, PyPI, npm, apt, and HuggingFace are reachable."
 append_prompt "IMPORTANT: You MUST NEVER run 'git push', 'git push --force', or any variant that pushes commits to a remote."
 append_prompt "All your changes must stay local. You may commit locally with 'git commit' but NEVER push."
-append_prompt "Do not use 'gh pr create', 'gh pr merge', or any GitHub CLI command that modifies remote state."
+if [ -n "${GH_TOKEN:-}" ]; then
+  append_prompt "GitHub CLI (gh) is available with READ-ONLY access. Use 'gh pr list', 'gh issue view', 'gh api', etc. to read repository data."
+  append_prompt "You CANNOT create, merge, close, or modify PRs, issues, or releases — the token is read-only."
+else
+  append_prompt "Do not use 'gh pr create', 'gh pr merge', or any GitHub CLI command that modifies remote state."
+fi
 append_prompt "If a task asks you to push, refuse and explain that pushing is disabled in this sandbox."
 
 # Tell the agent about the host filesystem if mounted
@@ -117,18 +126,11 @@ fi
 
 SANDBOX_PROMPT="$PROMPT_PARTS"
 
-SANDBOX_PORT="${SANDBOX_PORT:-7681}"
-
-if [ "$SANDBOX_MODE" = "web" ]; then
-  echo "Starting web terminal on port $SANDBOX_PORT..."
-  exec gosu claude ttyd \
-    --writable \
-    --port "$SANDBOX_PORT" \
-    claude --dangerously-skip-permissions \
-    --append-system-prompt "$SANDBOX_PROMPT" "$@"
-elif [ "$SANDBOX_MODE" = "shell" ]; then
-  exec gosu claude bash
+# Drop NET_ADMIN/NET_RAW from the capability bounding set so no process
+# (not even root via sudo) can modify the firewall after this point.
+if [ "$SANDBOX_MODE" = "shell" ]; then
+  exec setpriv --bounding-set=-net_admin,-net_raw -- gosu claude bash "$@"
 else
-  exec gosu claude claude --dangerously-skip-permissions \
+  exec setpriv --bounding-set=-net_admin,-net_raw -- gosu claude claude --dangerously-skip-permissions \
     --append-system-prompt "$SANDBOX_PROMPT" "$@"
 fi

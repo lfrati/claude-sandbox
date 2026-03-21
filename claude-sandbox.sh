@@ -1,4 +1,4 @@
-CLAUDE_SANDBOX_VERSION="0.5.0"
+CLAUDE_SANDBOX_VERSION="0.6.0"
 
 claude-sandbox() {
   if [ "$1" = "--version" ]; then
@@ -15,10 +15,12 @@ Options:
   --env <file>        Install dependencies before Claude starts
                       Supports: uv.lock, requirements.txt, pyproject.toml
   --shell             Drop into a bash shell instead of Claude
-  --web               Start as a web terminal (ttyd + Tailscale serve)
   --worktree <name>   Run in an isolated git worktree (.worktrees/<name>/)
   --version           Show version
   -h, --help          Show this help
+
+Network firewall is always active (iptables allowlist).
+Set SANDBOX_GH_TOKEN to a read-only GitHub PAT for gh CLI access.
 
 Extra arguments are forwarded to Claude Code. Run inside a git repo.
 
@@ -27,7 +29,6 @@ Examples:
   claude-sandbox -p "fix the login bug"             # one-shot prompt
   claude-sandbox --model sonnet -p "refactor auth"  # choose model
   claude-sandbox --env uv.lock                      # install deps first
-  claude-sandbox --web                              # web terminal on tailnet
   claude-sandbox --shell                            # bash shell in sandbox
   claude-sandbox --worktree feature-auth            # isolated worktree
 EOF
@@ -37,11 +38,10 @@ EOF
     echo "Error: not inside a git repository." >&2
     return 1
   fi
-  local web="" worktree="" shell="" sandbox_env=""
+  local worktree="" shell="" sandbox_env=""
   local args=()
   while [ $# -gt 0 ]; do
     case "$1" in
-      --web)      web=1; shift ;;
       --shell)    shell=1; shift ;;
       --worktree) worktree="$2"; shift 2 ;;
       --env)      sandbox_env="$2"; shift 2 ;;
@@ -95,6 +95,7 @@ EOF
 
   mkdir -p "$HOME/models" || { echo "Error: failed to create ~/models directory." >&2; return 1; }
   local flags=(--init --gpus all
+    --cap-add=NET_ADMIN --cap-add=NET_RAW
     -v "$HOME:$HOME:ro"
     -v "$HOME/models:$HOME/models"
     --tmpfs "$HOME/.ssh:ro,size=0"
@@ -123,28 +124,11 @@ EOF
     -e "PULSE_SERVER=unix:/tmp/pulse-native"
     -e "PULSE_COOKIE=/tmp/pulse-cookie"
     "${env_flag[@]}")
-  if [ -n "$web" ]; then
-    local port
-    port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()') || { echo "Error: failed to find available port." >&2; return 1; }
-    local cid
-    cid=$(docker run -d --name "$container_name" \
-      -e "SANDBOX_MODE=web" -e "SANDBOX_PORT=$port" -p "127.0.0.1:$port:$port" \
-      "${flags[@]}" claude-sandbox "${args[@]}") || { echo "Error: container failed to start." >&2; return 1; }
-    echo "Container: ${cid:0:12}"
-    if ! tailscale serve --bg "http://127.0.0.1:$port"; then
-      echo "Error: tailscale serve failed. Stopping container." >&2
-      docker rm -f "$cid" >/dev/null 2>&1
-      return 1
-    fi
-    echo "Stop: docker rm -f ${cid:0:12}"
-    # When the container exits, tear down tailscale serve
-    (
-      trap 'tailscale serve --https=443 off 2>/dev/null; exit' INT TERM
-      docker wait "$cid" >/dev/null 2>&1
-      tailscale serve --https=443 off
-      echo "Tailscale serve stopped."
-    ) & disown
-  elif [ -n "$shell" ]; then
+  # Pass read-only GitHub token if set
+  if [ -n "${SANDBOX_GH_TOKEN:-}" ]; then
+    flags+=(-e "GH_TOKEN=$SANDBOX_GH_TOKEN")
+  fi
+  if [ -n "$shell" ]; then
     docker run --rm -it --name "$container_name" -e "SANDBOX_MODE=shell" "${flags[@]}" claude-sandbox
   else
     docker run --rm -it --name "$container_name" "${flags[@]}" claude-sandbox "${args[@]}"
@@ -166,7 +150,6 @@ if [ -n "$ZSH_VERSION" ]; then
   _claude-sandbox() {
     local -a opts=('--env[Install dependencies before Claude starts]:file:_files'
       '--shell[Drop into a bash shell]'
-      '--web[Start as a web terminal]'
       '--worktree[Run in an isolated git worktree]:branch:{compadd $(git branch --format="%(refname:short)" 2>/dev/null)}'
       '--version[Show version]'
       '--help[Show help]'
@@ -184,7 +167,7 @@ elif [ -n "$BASH_VERSION" ]; then
       --worktree) COMPREPLY=($(compgen -W "$(git branch --format='%(refname:short)' 2>/dev/null)" -- "$cur")); return ;;
     esac
     if [[ "$cur" == -* ]]; then
-      COMPREPLY=($(compgen -W "--env --shell --web --worktree --version --help -h" -- "$cur"))
+      COMPREPLY=($(compgen -W "--env --shell --worktree --version --help -h" -- "$cur"))
     fi
   }
   complete -F _claude_sandbox_completions claude-sandbox
